@@ -1,14 +1,15 @@
 {
   "codeowners": ["@brankolazarevic"],
-  "config_flow": false,
+  "config_flow": true,
   "dependencies": [],
   "documentation": "https://github.com/brankolazarevic/esysunhome",
   "domain": "esy_sunhome",
   "iot_class": "calculated",
   "name": "ESY Sunhome",
   "requirements": [
-    "requests==2.25.1",
-    "aiomqtt>=2.0.1"
+    "requests>=2.25.1",
+    "aiomqtt>=2.0.1",
+    "aiohttp>=3.7.4"
   ],
   "version": "0.0.1"
 }

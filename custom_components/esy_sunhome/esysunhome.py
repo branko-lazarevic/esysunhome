@@ -1,26 +1,45 @@
-from custom_components.esy_sunhome.battery import EsySunhomeBattery
-import requests
+import logging
+import aiohttp
+from custom_components.esy_sunhome.const import (
+    ESY_API_BASE_URL,
+    ESY_API_LOGIN_ENDPOINT,
+    ESY_API_DEVICE_ENDPOINT,
+    ESY_API_OBTAIN_ENDPOINT,
+)
+from datetime import datetime, timedelta
 
-from .constants import BASE_URL, API_LOGIN_ENDPOINT, API_DEVICE_ENDPOINT, API_OBTAIN_ENDPOINT
+_LOGGER = logging.getLogger(__name__)
+
 
 class ESYSunhomeAPI:
-    def __init__(self, username, password, device_id):
-        """Initialize with user credentials, MQTT broker details, and subscribe to MQTT topics."""
+    def __init__(self, username, password, device_id) -> None:
+        """Initialize with user credentials."""
         self.username = username
         self.password = password
         self.access_token = None
+        self.refresh_token = None
+        self.token_expiry = None
         self.device_id = device_id
         self.name = None
-        self.get_bearer_token()
-        
-        if (device_id is None or device_id == ""):
-            self.fetch_device()
-            
-        self.battery = EsySunhomeBattery(self.device_id)
 
-    def get_bearer_token(self):
-        """Fetch the bearer token using the provided credentials."""
-        url = f"{BASE_URL}{API_LOGIN_ENDPOINT}"
+    async def get_bearer_token(self):
+        """Fetch the bearer token using the provided credentials asynchronously."""
+        # Check if the token has expired
+        if self.is_token_expired():
+            _LOGGER.info("Access token expired, refreshing token")
+            if not await self.refresh_access_token():
+                _LOGGER.error("Failed to refresh access token. Re-authenticating")
+                await self.authenticate()
+        elif not self.access_token:
+            # If no token is available, authenticate
+            await self.authenticate()
+
+        if self.device_id is None or self.device_id == "":
+            await self.fetch_device()
+
+    async def authenticate(self):
+        """Authenticate and retrieve the initial bearer token."""
+        url = f"{ESY_API_BASE_URL}{ESY_API_LOGIN_ENDPOINT}"
         headers = {"Content-Type": "application/json"}
         login_data = {
             "password": self.password,
@@ -30,49 +49,102 @@ class ESYSunhomeAPI:
             "userType": 2,
             "userName": self.username,
         }
-        
-        response = requests.post(url, json=login_data, headers=headers)
-        
-        if response.status_code == 200:
-            data = response.json()
-            self.access_token = data['data']["access_token"]
-        else:
-            raise Exception("Failed to retrieve access token. Check your credentials.")
 
-    def fetch_device(self):
+        async with aiohttp.ClientSession().post(
+            url, json=login_data, headers=headers
+        ) as response:
+            if response.status == 200:
+                data = await response.json()
+
+                # Extract tokens and expiration time
+                self.access_token = data["data"].get("access_token")
+                self.refresh_token = data["data"].get("refresh_token")
+                expires_in = data["data"].get("expires_in", 0)
+                self.token_expiry = datetime.utcnow() + timedelta(seconds=expires_in)
+
+                _LOGGER.debug(f"Access token retrieved: {self.access_token}")
+                await self.fetch_device()  # Fetch the device ID after getting the token
+            else:
+                raise Exception(
+                    f"Failed to retrieve access token. Status code: {response.status}"
+                )
+
+    async def refresh_access_token(self):
+        """Use the refresh token to get a new access token."""
+        if not self.refresh_token:
+            _LOGGER.error("No refresh token available")
+            return False
+
+        url = f"{self.base_url}/token"  # Adjust URL if needed for the refresh endpoint
+        headers = {"Content-Type": "application/json"}
+        refresh_data = {
+            "grant_type": "refresh_token",
+            "refresh_token": self.refresh_token,
+        }
+
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                url, json=refresh_data, headers=headers
+            ) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    # Extract new tokens and expiration time
+                    self.access_token = data["data"].get("access_token")
+                    self.refresh_token = data["data"].get("refresh_token")
+                    expires_in = data["data"].get("expires_in", 0)
+                    self.token_expiry = datetime.now(datetime.timezone.utc) + timedelta(
+                        seconds=expires_in
+                    )
+
+                    _LOGGER.debug(f"Access token refreshed: {self.access_token}")
+                    return True
+                else:
+                    _LOGGER.error("Failed to refresh access token")
+                    return False
+
+    def is_token_expired(self):
+        """Check if the access token has expired."""
+        if not self.token_expiry:
+            return True
+        return datetime.now(datetime.timezone.utc) >= self.token_expiry
+
+    async def fetch_device(self):
         """Fetch the device (inverter) ID associated with the user."""
         if not self.access_token:
-            raise Exception("Access token is required to fetch device ID.")
+            raise Exception("Access token is required to fetch device ID")
 
-        url = f"{BASE_URL}{API_DEVICE_ENDPOINT}"
+        url = f"{ESY_API_BASE_URL}{ESY_API_DEVICE_ENDPOINT}"
         headers = {"Authorization": f"bearer {self.access_token}"}
-        
-        response = requests.get(url, headers=headers)
-        
-        if response.status_code == 200:
-            data = response.json()
-            self.device_id = data['data']['records'][0]['id']
-            self.name = data['data']['records'][0]['name']
-            print(f"Device ID retrieved: {self.device_id}")
-        else:
-            raise Exception("Failed to fetch device ID.")
 
-    def request_update(self):
+        async with aiohttp.ClientSession().get(url, headers=headers) as response:
+            if response.status == 200:
+                data = await response.json()
+                self.device_id = data["data"]["records"][0]["id"]
+                _LOGGER.debug(f"Device ID retrieved: {self.device_id}")
+            else:
+                raise Exception(
+                    f"Failed to fetch device ID. Status code: {response.status}"
+                )
+
+    async def request_update(self, session):
         """Call the /api/param/set/obtain endpoint and publish data to MQTT."""
-        if not self.device_id or not self.access_token:
-            print("Device ID or access token not available.")
-            return
+        if not self.access_token:
+            await self.get_bearer_token()
+        if not self.device_id:
+            await self.fetch_device()
 
-        url = f"{BASE_URL}{API_OBTAIN_ENDPOINT}{self.device_id}"
+        url = f"{ESY_API_BASE_URL}{ESY_API_OBTAIN_ENDPOINT}{self.device_id}"
         headers = {"Authorization": f"bearer {self.access_token}"}
-        
-        response = requests.get(url, headers=headers)
-        
-        if (response.status_code != 200):
-            print("Failed to fetch data from /api/param/set/obtain.")
+
+        async with aiohttp.ClientSession().get(url, headers=headers) as response:
+            if response.status == 200:
+                _LOGGER.debug("Data update requested")
+            else:
+                raise Exception(f"Failed to fetch data. Status code: {response.status}")
+
 
 # Test script to run locally
-# if __name__ == "__main__":    
+# if __name__ == "__main__":
 #     username = "testuser@test.com"
 #     password = "password"
 

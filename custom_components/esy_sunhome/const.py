@@ -4,8 +4,12 @@ ESY_API_BASE_URL = "http://esybackend.esysunhome.com:7073"
 ESY_API_LOGIN_ENDPOINT = "/login?grant_type=app"
 ESY_API_DEVICE_ENDPOINT = "/api/lsydevice/page?current=1&size=1"
 ESY_API_OBTAIN_ENDPOINT = "/api/param/set/obtain?val=3&deviceId="
-ESY_MQTT_BROKER_URL = "mqtt://99.83.178.210"
+ESY_MQTT_BROKER_URL = "99.83.178.210"
 ESY_MQTT_BROKER_PORT = 1883
+
+CONF_USERNAME = "username"
+CONF_PASSWORD = "password"
+CONF_DEVICE_ID = "device_id"
 
 ATTR_DEVICE_ID = "deviceId"
 ATTR_SOC = "batterySoc"

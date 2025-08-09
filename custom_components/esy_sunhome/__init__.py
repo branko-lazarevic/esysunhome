@@ -1,14 +1,16 @@
-from __future__ import annotations
-
-from homeassistant.config_entries import ConfigEntry
+import logging
+from homeassistant.components.sensor import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
-
 from .coordinator import EsySunhomeCoordinator
+from .const import DOMAIN
+
+_LOGGER = logging.getLogger(__name__)
 
 PLATFORMS: list[Platform] = [
     Platform.SENSOR,
 ]
+
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up ESY Sunhome from a config entry."""
