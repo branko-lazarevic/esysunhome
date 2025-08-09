@@ -50,24 +50,29 @@ class ESYSunhomeAPI:
             "userName": self.username,
         }
 
-        async with aiohttp.ClientSession().post(
-            url, json=login_data, headers=headers
-        ) as response:
-            if response.status == 200:
-                data = await response.json()
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, json=login_data, headers=headers) as response:
+                if response.status == 200:
+                    data = await response.json()
 
-                # Extract tokens and expiration time
-                self.access_token = data["data"].get("access_token")
-                self.refresh_token = data["data"].get("refresh_token")
-                expires_in = data["data"].get("expires_in", 0)
-                self.token_expiry = datetime.utcnow() + timedelta(seconds=expires_in)
+                    # Extract tokens and expiration time
+                    self.access_token = data["data"].get("access_token")
+                    self.refresh_token = data["data"].get("refresh_token")
+                    expires_in = data["data"].get("expires_in", 0)
+                    self.token_expiry = datetime.utcnow() + timedelta(
+                        seconds=expires_in
+                    )
 
-                _LOGGER.debug(f"Access token retrieved: {self.access_token}")
-                await self.fetch_device()  # Fetch the device ID after getting the token
-            else:
-                raise Exception(
-                    f"Failed to retrieve access token. Status code: {response.status}"
-                )
+                    _LOGGER.debug(f"Access token retrieved: {self.access_token}")
+                    if self.device_id is None or self.device_id == "":
+                        await self.fetch_device()
+                else:
+                    session.close()
+                    raise Exception(
+                        f"Failed to retrieve access token. Status code: {response.status}"
+                    )
+
+        session.close()
 
     async def refresh_access_token(self):
         """Use the refresh token to get a new access token."""
@@ -81,6 +86,8 @@ class ESYSunhomeAPI:
             "grant_type": "refresh_token",
             "refresh_token": self.refresh_token,
         }
+
+        result = None
 
         async with aiohttp.ClientSession() as session:
             async with session.post(
@@ -97,10 +104,13 @@ class ESYSunhomeAPI:
                     )
 
                     _LOGGER.debug(f"Access token refreshed: {self.access_token}")
-                    return True
+                    result = True
                 else:
                     _LOGGER.error("Failed to refresh access token")
-                    return False
+                    result = False
+
+        session.close()
+        return result
 
     def is_token_expired(self):
         """Check if the access token has expired."""
@@ -116,31 +126,36 @@ class ESYSunhomeAPI:
         url = f"{ESY_API_BASE_URL}{ESY_API_DEVICE_ENDPOINT}"
         headers = {"Authorization": f"bearer {self.access_token}"}
 
-        async with aiohttp.ClientSession().get(url, headers=headers) as response:
-            if response.status == 200:
-                data = await response.json()
-                self.device_id = data["data"]["records"][0]["id"]
-                _LOGGER.debug(f"Device ID retrieved: {self.device_id}")
-            else:
-                raise Exception(
-                    f"Failed to fetch device ID. Status code: {response.status}"
-                )
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, headers=headers) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    self.device_id = data["data"]["records"][0]["id"]
+                    _LOGGER.debug(f"Device ID retrieved: {self.device_id}")
+                else:
+                    raise Exception(
+                        f"Failed to fetch device ID. Status code: {response.status}"
+                    )
 
-    async def request_update(self, session):
+        session.close()
+
+    async def request_update(self):
         """Call the /api/param/set/obtain endpoint and publish data to MQTT."""
-        if not self.access_token:
-            await self.get_bearer_token()
-        if not self.device_id:
-            await self.fetch_device()
+        await self.get_bearer_token()
 
         url = f"{ESY_API_BASE_URL}{ESY_API_OBTAIN_ENDPOINT}{self.device_id}"
         headers = {"Authorization": f"bearer {self.access_token}"}
 
-        async with aiohttp.ClientSession().get(url, headers=headers) as response:
-            if response.status == 200:
-                _LOGGER.debug("Data update requested")
-            else:
-                raise Exception(f"Failed to fetch data. Status code: {response.status}")
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, headers=headers) as response:
+                if response.status == 200:
+                    _LOGGER.debug("Data update requested")
+                else:
+                    raise Exception(
+                        f"Failed to fetch data. Status code: {response.status}"
+                    )
+
+        session.close()
 
 
 # Test script to run locally

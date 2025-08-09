@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import json
 import logging
 from typing import Any
@@ -182,8 +183,15 @@ class BatteryState:
 class MessageListener:
     """Message Listener."""
 
+    def __init__(self, coordinator) -> None:
+        """Initialise listener."""
+        self.coordinator = coordinator
+
     def on_message(self, state: BatteryState) -> None:
-        """Process device state updates."""
+        """Handle incoming messages."""
+        with contextlib.suppress(AttributeError):
+            self.coordinator.set_update_interval(fast=True)
+        self.coordinator.async_set_updated_data(state)
 
 
 class EsySunhomeBattery:
@@ -197,7 +205,7 @@ class EsySunhomeBattery:
         self.subscribe_topic = f"APP/{device_id}/NEWS"
         self.api = None
 
-    async def request_update(self):
+    async def request_api_update(self):
         """Trigger the API call to publish data"""
         if not self.api:
             self.api = ESYSunhomeAPI(self.username, self.password, self.device_id)
@@ -217,10 +225,11 @@ class EsySunhomeBattery:
                     hostname=ESY_MQTT_BROKER_URL, port=ESY_MQTT_BROKER_PORT
                 ) as self._client:
                     _LOGGER.debug("Connected, subscribing to %s", self.subscribe_topic)
+
                     await self._client.subscribe(self.subscribe_topic)
 
                     # Request initial update if necessary
-                    await self.request_update()
+                    await self.request_api_update()
 
                     # process messages
                     async for message in self._client.messages:
