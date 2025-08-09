@@ -1,6 +1,7 @@
 import contextlib
 from datetime import timedelta
 import logging
+import aiohttp
 
 from homeassistant.const import CONF_UNIQUE_ID
 from homeassistant.core import HomeAssistant
