@@ -1,5 +1,22 @@
 {
     "entity": {
+        "binary_sensor": {
+            "gridLine": {
+                "name": "Grid Active"
+            },
+            "loadLine": {
+                "name": "Load Active"
+            },
+            "pvLine": {
+                "name": "PV Active"
+            },
+            "batteryLine": {
+                "name": "Battery Active"
+            },
+            "heatingState": {
+                "name": "Inverter Heating State"
+            }
+        },
         "sensor": {
             "batterySoc": {
                 "name": "Battery State of Charge"
@@ -28,23 +45,8 @@
             "gridExport": {
                 "name": "Grid Export"
             },
-            "gridLine": {
-                "name": "Grid Active"
-            },
-            "loadLine": {
-                "name": "Load Active"
-            },
-            "pvLine": {
-                "name": "PV Active"
-            },
-            "batteryLine": {
-                "name": "Battery Active"
-            },
             "scheduleMode": {
                 "name": "Schedule Mode"
-            },
-            "heatingState": {
-                "name": "Inverter Heating State"
             },
             "batteryStatus": {
                 "name": "Battery Status"

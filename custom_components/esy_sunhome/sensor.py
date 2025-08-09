@@ -55,7 +55,6 @@ async def async_setup_entry(
             GridImportSensor(coordinator=entry.runtime_data),
             GridExportSensor(coordinator=entry.runtime_data),
             ScheduleModeSensor(coordinator=entry.runtime_data),
-            HeaterStateSensor(coordinator=entry.runtime_data),
             DailyPowerGenSensor(coordinator=entry.runtime_data),
             RatedPowerSensor(coordinator=entry.runtime_data),
             BatteryStatusTextSensor(coordinator=entry.runtime_data),
@@ -82,7 +81,6 @@ class StateOfChargeSensor(EsySensorBase):
     _attr_native_unit_of_measurement = "%"
     _attr_device_class = SensorDeviceClass.BATTERY
     _attr_translation_key = ATTR_SOC
-    _attr_icon = "mdi:battery"
 
 
 class EsyPowerSensor(EsySensorBase):
@@ -154,13 +152,6 @@ class ScheduleModeSensor(EsySensorBase):
 
     _attr_entity_registry_enabled_default = False
     _attr_translation_key = ATTR_SCHEDULE_MODE
-
-
-class HeaterStateSensor(EsySensorBase):
-    """Represents the current heater state."""
-
-    _attr_entity_registry_enabled_default = False
-    _attr_translation_key = ATTR_HEATER_STATE
 
 
 class BatteryStatusSensor(EsySensorBase):

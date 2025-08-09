@@ -2,6 +2,7 @@ import logging
 
 from config.custom_components.esy_sunhome.const import (
     ATTR_GRID_ACTIVE,
+    ATTR_HEATER_STATE,
     ATTR_LOAD_ACTIVE,
     ATTR_PV_ACTIVE,
     ATTR_BATTERY_ACTIVE,
@@ -32,6 +33,7 @@ async def async_setup_entry(
             LoadActiveSensor(coordinator=entry.runtime_data),
             PvActiveSensor(coordinator=entry.runtime_data),
             BatteryActiveSensor(coordinator=entry.runtime_data),
+            HeaterStateSensor(coordinator=entry.runtime_data),
         ]
     )
 
@@ -45,9 +47,9 @@ class EsyBinarySensorBase(EsySunhomeEntity, BinarySensorEntity):
     @callback
     def _handle_coordinator_update(self) -> None:
         if hasattr(self.coordinator.data, self._attr_translation_key):
-            self._attr_is_on = (
-                getattr(self.coordinator.data, self._attr_translation_key) == "1"
-            )
+            self._attr_is_on = getattr(
+                self.coordinator.data, self._attr_translation_key
+            ) == 1
             self.async_write_ha_state()
 
 
@@ -77,3 +79,10 @@ class BatteryActiveSensor(EsyBinarySensorBase):
 
     _attr_translation_key = ATTR_BATTERY_ACTIVE
     _attr_icon = "mdi:home-battery-outline"
+
+
+class HeaterStateSensor(EsyBinarySensorBase):
+    """Represents the current heater state."""
+
+    _attr_entity_registry_enabled_default = False
+    _attr_translation_key = ATTR_HEATER_STATE
