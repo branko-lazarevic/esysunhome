@@ -62,7 +62,7 @@
                 "name": "Inverter Temperature"
             },
             "batteryStatusText": {
-                "name": "Battery Status Text"
+                "name": "Battery Status"
             }
         }
     }

@@ -23,7 +23,7 @@ class EsySunhomeMessageListener(MessageListener):
     def on_message(self, state: BatteryState) -> None:
         """Handle incoming messages."""
         with contextlib.suppress(AttributeError):
-            self.coordinator.set_update_interval(state.power)
+            self.coordinator.set_update_interval(True)
         self.coordinator.async_set_updated_data(state)
 
 
@@ -46,10 +46,10 @@ class EsySunhomeCoordinator(DataUpdateCoordinator[BatteryState]):
             self.config_entry.data.get(CONF_DEVICE_ID),
         )
         self.api.connect(EsySunhomeMessageListener(self))
-        self._fast_updates = False
+        self._fast_updates = True
         self._cancel_updates = None
 
-        self.set_update_interval(fast=False)
+        self.set_update_interval(fast=True)
 
     def set_update_interval(self, fast: bool) -> None:
         """Adjust the update interval."""

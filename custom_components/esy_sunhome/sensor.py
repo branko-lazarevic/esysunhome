@@ -1,22 +1,18 @@
 import logging
 
 from custom_components.esy_sunhome.const import (
-    ATTR_BATTERY_ACTIVE,
     ATTR_BATTERY_EXPORT,
     ATTR_BATTERY_IMPORT,
     ATTR_BATTERY_POWER,
     ATTR_BATTERY_STATUS,
     ATTR_BATTERY_STATUS_TEXT,
     ATTR_DAILY_POWER_GEN,
-    ATTR_GRID_ACTIVE,
     ATTR_GRID_EXPORT,
     ATTR_GRID_IMPORT,
     ATTR_GRID_POWER,
     ATTR_HEATER_STATE,
     ATTR_INVERTER_TEMP,
-    ATTR_LOAD_ACTIVE,
     ATTR_LOAD_POWER,
-    ATTR_PV_ACTIVE,
     ATTR_PV_POWER,
     ATTR_RATED_POWER,
     ATTR_SCHEDULE_MODE,
@@ -30,10 +26,8 @@ from homeassistant.components.sensor import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
-    UnitOfElectricCurrent,
     UnitOfPower,
     UnitOfTemperature,
-    UnitOfTime,
 )
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -60,10 +54,6 @@ async def async_setup_entry(
             BatteryExportSensor(coordinator=entry.runtime_data),
             GridImportSensor(coordinator=entry.runtime_data),
             GridExportSensor(coordinator=entry.runtime_data),
-            GridActiveSensor(coordinator=entry.runtime_data),
-            LoadActiveSensor(coordinator=entry.runtime_data),
-            PvActiveSensor(coordinator=entry.runtime_data),
-            BatteryActiveSensor(coordinator=entry.runtime_data),
             ScheduleModeSensor(coordinator=entry.runtime_data),
             HeaterStateSensor(coordinator=entry.runtime_data),
             DailyPowerGenSensor(coordinator=entry.runtime_data),
@@ -92,6 +82,7 @@ class StateOfChargeSensor(EsySensorBase):
     _attr_native_unit_of_measurement = "%"
     _attr_device_class = SensorDeviceClass.BATTERY
     _attr_translation_key = ATTR_SOC
+    _attr_icon = "mdi:battery"
 
 
 class EsyPowerSensor(EsySensorBase):
@@ -106,95 +97,83 @@ class GridPowerSensor(EsyPowerSensor):
     """Represents the current grid power."""
 
     _attr_translation_key = ATTR_GRID_POWER
+    _attr_icon = "mdi:transmission-tower"
 
 
 class LoadPowerSensor(EsyPowerSensor):
     """Represents the current load power."""
 
     _attr_translation_key = ATTR_LOAD_POWER
+    _attr_icon = "mdi:home-lightning-bolt"
 
 
 class BatteryPowerSensor(EsyPowerSensor):
     """Represents the current battery power."""
 
     _attr_translation_key = ATTR_BATTERY_POWER
+    _attr_icon = "mdi:home-battery-outline"
 
 
 class PvPowerSensor(EsyPowerSensor):
     """Represents the current PV power."""
 
     _attr_translation_key = ATTR_PV_POWER
+    _attr_icon = "mdi:solar-power-variant"
 
 
 class BatteryImportSensor(EsyPowerSensor):
     """Represents the current battery import power."""
 
     _attr_translation_key = ATTR_BATTERY_IMPORT
+    _attr_icon = "mdi:battery-arrow-up-outline"
 
 
 class BatteryExportSensor(EsyPowerSensor):
     """Represents the current battery export power."""
 
     _attr_translation_key = ATTR_BATTERY_EXPORT
+    _attr_icon = "mdi:battery-arrow-down-outline"
 
 
 class GridImportSensor(EsyPowerSensor):
     """Represents the current grid import power."""
 
     _attr_translation_key = ATTR_GRID_IMPORT
+    _attr_icon = "mdi:transmission-tower-import"
 
 
 class GridExportSensor(EsyPowerSensor):
     """Represents the current grid export power."""
 
     _attr_translation_key = ATTR_GRID_EXPORT
-
-
-class GridActiveSensor(EsyPowerSensor):
-    """Represents the current grid active power."""
-
-    _attr_translation_key = ATTR_GRID_ACTIVE
-
-
-class LoadActiveSensor(EsyPowerSensor):
-    """Represents the current load active power."""
-
-    _attr_translation_key = ATTR_LOAD_ACTIVE
-
-
-class PvActiveSensor(EsyPowerSensor):
-    """Represents the current PV active power."""
-
-    _attr_translation_key = ATTR_PV_ACTIVE
-
-
-class BatteryActiveSensor(EsyPowerSensor):
-    """Represents the current battery active power."""
-
-    _attr_translation_key = ATTR_BATTERY_ACTIVE
+    _attr_icon = "mdi:transmission-tower-export"
 
 
 class ScheduleModeSensor(EsySensorBase):
     """Represents the current schedule mode."""
 
+    _attr_entity_registry_enabled_default = False
     _attr_translation_key = ATTR_SCHEDULE_MODE
 
 
 class HeaterStateSensor(EsySensorBase):
     """Represents the current heater state."""
 
+    _attr_entity_registry_enabled_default = False
     _attr_translation_key = ATTR_HEATER_STATE
 
 
 class BatteryStatusSensor(EsySensorBase):
     """Represents the current battery status."""
 
+    _attr_entity_registry_enabled_default = False
     _attr_translation_key = ATTR_BATTERY_STATUS
 
 
 class SystemRunStatusSensor(EsySensorBase):
     """Represents the current system run status."""
 
+    _attr_entity_registry_enabled_default = False
     _attr_translation_key = ATTR_SYSTEM_RUN_STATUS
 
 
@@ -210,6 +189,7 @@ class DailyPowerGenSensor(EsySensorBase):
 class RatedPowerSensor(EsySensorBase):
     """Represents the current rated power."""
 
+    _attr_entity_registry_enabled_default = False
     _attr_translation_key = ATTR_RATED_POWER
     _attr_device_class = SensorDeviceClass.POWER
     _attr_native_unit_of_measurement = UnitOfPower.KILO_WATT
@@ -219,6 +199,7 @@ class RatedPowerSensor(EsySensorBase):
 class BatteryStatusTextSensor(EsySensorBase):
     """Represents the current battery status text."""
 
+    _attr_entity_registry_enabled_default = False
     _attr_translation_key = ATTR_BATTERY_STATUS_TEXT
 
 

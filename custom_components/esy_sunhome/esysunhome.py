@@ -67,12 +67,12 @@ class ESYSunhomeAPI:
                     if self.device_id is None or self.device_id == "":
                         await self.fetch_device()
                 else:
-                    session.close()
+                    await session.close()
                     raise Exception(
                         f"Failed to retrieve access token. Status code: {response.status}"
                     )
 
-        session.close()
+        await session.close()
 
     async def refresh_access_token(self):
         """Use the refresh token to get a new access token."""
@@ -99,7 +99,7 @@ class ESYSunhomeAPI:
                     self.access_token = data["data"].get("access_token")
                     self.refresh_token = data["data"].get("refresh_token")
                     expires_in = data["data"].get("expires_in", 0)
-                    self.token_expiry = datetime.now(datetime.timezone.utc) + timedelta(
+                    self.token_expiry = datetime.utcnow() + timedelta(
                         seconds=expires_in
                     )
 
@@ -109,14 +109,14 @@ class ESYSunhomeAPI:
                     _LOGGER.error("Failed to refresh access token")
                     result = False
 
-        session.close()
+        await session.close()
         return result
 
     def is_token_expired(self):
         """Check if the access token has expired."""
         if not self.token_expiry:
             return True
-        return datetime.now(datetime.timezone.utc) >= self.token_expiry
+        return datetime.utcnow() >= self.token_expiry
 
     async def fetch_device(self):
         """Fetch the device (inverter) ID associated with the user."""
@@ -137,7 +137,7 @@ class ESYSunhomeAPI:
                         f"Failed to fetch device ID. Status code: {response.status}"
                     )
 
-        session.close()
+        await session.close()
 
     async def request_update(self):
         """Call the /api/param/set/obtain endpoint and publish data to MQTT."""
@@ -155,7 +155,7 @@ class ESYSunhomeAPI:
                         f"Failed to fetch data. Status code: {response.status}"
                     )
 
-        session.close()
+        await session.close()
 
 
 # Test script to run locally

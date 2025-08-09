@@ -168,7 +168,7 @@ class BatteryState:
                 raise AttributeError(f"Attribute '{name}' not found in attr_map")
 
             # Get the value based on the index (position) in the data dictionary
-            raw_value = self.data[attr_info[0]]
+            raw_value = self.data[name]
 
             # Apply the processing function if provided
             if attr_info[1]:
@@ -202,8 +202,12 @@ class EsySunhomeBattery:
         self.username = username
         self.password = password
         self.device_id = device_id
-        self.subscribe_topic = f"APP/{device_id}/NEWS"
+        self.subscribe_topic = f"/APP/{device_id}/NEWS"
         self.api = None
+
+        self._client = None
+        self._connected = False
+        self._listener_task = None
 
     async def request_api_update(self):
         """Trigger the API call to publish data"""
@@ -271,7 +275,8 @@ class EsySunhomeBattery:
             _LOGGER.error("Error processing data(%s): %s", e, message.payload)
 
     async def request_update(self) -> None:
-        """Nothing Implemented Yet"""
+        """Send MQTT update request to controller."""
+        await self.request_api_update()
 
     async def set_value(self, name: str, value: Any) -> None:
         """Nothing Implemented Yet"""
