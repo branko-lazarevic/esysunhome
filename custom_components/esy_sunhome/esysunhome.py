@@ -1,6 +1,6 @@
 import logging
 import aiohttp
-from custom_components.esy_sunhome.const import (
+from .const import (
     ESY_API_BASE_URL,
     ESY_API_LOGIN_ENDPOINT,
     ESY_API_DEVICE_ENDPOINT,
@@ -158,13 +158,14 @@ class ESYSunhomeAPI:
         await session.close()
 
 
-# Test script to run locally
-# if __name__ == "__main__":
-#     username = "testuser@test.com"
-#     password = "password"
+#Test script to run locally
+if __name__ == "__main__":
+    username = "testuser@test.com"
+    password = "password"
 
-#     try:
-#         api = ESYSunhomeAPI(username, password, None)
-#         api.fetch_all_data()  # Start fetching data every 15 seconds
-#     except Exception as e:
-#         print(f"Error: {e}")
+    try:
+        api = ESYSunhomeAPI(username, password, None)
+        api.fetch_all_data()  # Start fetching data every 15 seconds
+    except Exception as e:
+        print(f"Error: {e}")
+

@@ -1,6 +1,6 @@
 import logging
 
-from custom_components.esy_sunhome.const import (
+from .const import (
     ATTR_BATTERY_EXPORT,
     ATTR_BATTERY_IMPORT,
     ATTR_BATTERY_POWER,
@@ -201,3 +201,4 @@ class InverterTempSensor(EsySensorBase):
     _attr_device_class = SensorDeviceClass.TEMPERATURE
     _attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
     _attr_state_class = SensorStateClass.MEASUREMENT
+

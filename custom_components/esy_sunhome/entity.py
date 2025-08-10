@@ -24,3 +24,4 @@ class EsySunhomeEntity(CoordinatorEntity[EsySunhomeCoordinator]):
             manufacturer="EsySunhome",
             model="HM6",
         )
+

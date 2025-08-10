@@ -5,8 +5,8 @@ import logging
 from typing import Any
 
 import aiomqtt
-from config.custom_components.esy_sunhome.esysunhome import ESYSunhomeAPI
-from custom_components.esy_sunhome.const import (
+from .esysunhome import ESYSunhomeAPI
+from .const import (
     ATTR_DEVICE_ID,
     ATTR_SOC,
     ATTR_GRID_POWER,
@@ -290,7 +290,9 @@ async def main():
             _LOGGER.info(state)
 
     esy_battery = EsySunhomeBattery(
-        device_id=123456
+	username="user@test.com",
+	password="password",
+        device_id=12345
     )  # Replace with your actual device ID
 
     await esy_battery.connect(LogMessageListener())
@@ -304,3 +306,4 @@ async def main():
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     asyncio.run(main())
+

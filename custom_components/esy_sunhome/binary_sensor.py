@@ -1,6 +1,6 @@
 import logging
 
-from config.custom_components.esy_sunhome.const import (
+from .const import (
     ATTR_GRID_ACTIVE,
     ATTR_HEATER_STATE,
     ATTR_LOAD_ACTIVE,

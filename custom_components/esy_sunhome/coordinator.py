@@ -77,3 +77,4 @@ class EsySunhomeCoordinator(DataUpdateCoordinator[BatteryState]):
         """Shutdown the API."""
         if self.api:
             await self.api.disconnect()
+
