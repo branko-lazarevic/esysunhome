@@ -1,7 +1,7 @@
 {
   "codeowners": ["@brankolazarevic"],
   "config_flow": true,
-  "dependencies": [],
+  "dependencies": [aiohttp, aiomqtt],
   "documentation": "https://github.com/brankolazarevic/esysunhome",
   "domain": "esy_sunhome",
   "iot_class": "calculated",
