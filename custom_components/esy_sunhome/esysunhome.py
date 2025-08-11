@@ -5,7 +5,8 @@ from .const import (
     ESY_API_LOGIN_ENDPOINT,
     ESY_API_DEVICE_ENDPOINT,
     ESY_API_OBTAIN_ENDPOINT,
-    ESY_API_MODE_ENDPOINT
+    ESY_API_MODE_ENDPOINT,
+    ATTR_SCHEDULE_MODE
 )
 from datetime import datetime, timedelta
 
@@ -165,8 +166,11 @@ class ESYSunhomeAPI:
         url = f"{ESY_API_BASE_URL}{ESY_API_MODE_ENDPOINT}"
         headers = {"Authorization": f"bearer {self.access_token}"}
 
+        _LOGGER.info(f"Setting mode to {mode} for device {self.device_id}")
+
         async with aiohttp.ClientSession() as session:
-            async with session.post(url, json={"mode": mode, "deviceId": self.device_id}, headers=headers) as response:
+            async with session.post(url, json={ATTR_SCHEDULE_MODE: mode, "deviceId": self.device_id}, headers=headers) as response:
+                _LOGGER.debug(f"Response status: {response.status}, Response body: {await response.text()}")
                 if response.status == 200:
                     _LOGGER.debug(f"Mode successfully updated to {mode}")
                 else:
