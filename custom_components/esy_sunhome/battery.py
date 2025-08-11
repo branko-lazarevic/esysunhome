@@ -110,13 +110,9 @@ class BatteryState:
         ),  # Battery Active, raw value (could be 0 or 1)
         ATTR_SCHEDULE_MODE: (
             14,
-            lambda x: "Custom Schedule"
-            if x == 5
-            else "Normal Schedule"
-            if x == 1
-            else "Unknown Schedule",
+            lambda x: BatteryState.modes.get(x, "Unknown Mode"),
             None,
-        ),  # Map schedule code to string
+        ),
         ATTR_HEATER_STATE: (
             15,
             lambda x: x,

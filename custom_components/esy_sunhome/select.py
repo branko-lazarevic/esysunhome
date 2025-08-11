@@ -33,8 +33,8 @@ class ModeSelect(EsySunhomeEntity, SelectEntity):
 
     @callback
     def _handle_coordinator_update(self) -> None:
-        if hasattr(self.coordinator.data, "mode"):
-            self._attr_current_option = self.coordinator.data.mode
+        if hasattr(self.coordinator.data, ATTR_SCHEDULE_MODE):
+            self._attr_current_option = self.coordinator.data.ATTR_SCHEDULE_MODE
             self.async_write_ha_state()
 
     async def async_select_option(self, option: str) -> None:
@@ -46,3 +46,4 @@ class ModeSelect(EsySunhomeEntity, SelectEntity):
             if mode == value:
                 return key
         return None  # Return None if the value is not found
+    
