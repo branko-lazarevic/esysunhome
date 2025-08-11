@@ -314,7 +314,7 @@ class EsySunhomeBattery:
             self.api = ESYSunhomeAPI(self.username, self.password, self.device_id)  
 
         if (value_name == ATTR_SCHEDULE_MODE):
-            await self.api.set_mode(ATTR_SCHEDULE_MODE, value)
+            await self.api.set_mode(value)
 
 
 async def main():
