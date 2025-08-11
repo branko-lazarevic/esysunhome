@@ -6,6 +6,7 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .battery import BatteryState
+from .entity import EsySunhomeEntity
 from .const import ATTR_SCHEDULE_MODE
 
 _LOGGER = logging.getLogger(__name__)
@@ -23,7 +24,7 @@ async def async_setup_entry(
     )
 
 
-class ModeSelect(BatteryState, SelectEntity):
+class ModeSelect(EsySunhomeEntity, SelectEntity):
     """Represents the operating mode of the heat pump."""
 
     _attr_translation_key = ATTR_SCHEDULE_MODE
