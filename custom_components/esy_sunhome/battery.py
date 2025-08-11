@@ -3,6 +3,7 @@ import contextlib
 import json
 import logging
 from typing import Any
+from unicodedata import name
 
 import aiomqtt
 from .esysunhome import ESYSunhomeAPI
@@ -39,12 +40,18 @@ _LOGGER = logging.getLogger(__name__)
 class BatteryState:
     """Represents the current system state."""
 
-    modes = [
-        "Regular Mode",
-        "Emergency Mode",
-        "Electricity Sale Mode",
-        "AI Mode",
-    ]
+    modes = {
+        1: "Regular Mode",
+        2: "Emergency Mode",
+        3: "Electricity Sell Mode",
+        4: "AI Mode",
+        5: "Battery Energy Management",
+        # 6: "Battery Priority Mode",
+        # 7: "Grid Priority Mode",
+        # 8: "AC Charging Off & Backup Mode",
+        # 9: "PV Mode",
+        # 10: "Forced Off-grid Mode",
+    }
 
     attr_map = {
         ATTR_DEVICE_ID: (
@@ -162,20 +169,40 @@ class BatteryState:
     def __getattr__(self, name: str):
         """Return a processed attribute."""
         try:
-            # Retrieve the index and processing function from the attribute map
-            attr_info = self.attr_map.get(name)
-            if not attr_info:
-                raise AttributeError(f"Attribute '{name}' not found in attr_map")
+            if self.data["msgType"] == 0 and self.data["valType"] == 7:
+                if name in [ATTR_INVERTER_TEMP]:
+                    return self.data['dataList'][5]['dataList'][0]['val']
+            elif self.data["msgType"] == 0 and self.data["valType"] == 0:
+                if name in [
+                    ATTR_GRID_IMPORT,
+                    ATTR_GRID_EXPORT,
+                    ATTR_BATTERY_IMPORT,
+                    ATTR_BATTERY_EXPORT,
+                ]:
+                    if (name == ATTR_GRID_IMPORT and self.data["gridLine"] == 2) or (
+                        name == ATTR_GRID_EXPORT and self.data["gridLine"] == 1
+                    ):
+                        return self.data[ATTR_GRID_POWER]
+                    if (name == ATTR_BATTERY_IMPORT and self.data["batteryLine"] == 2) or (
+                        name == ATTR_BATTERY_EXPORT and self.data["batteryLine"] == 1
+                    ):
+                        return self.data[ATTR_BATTERY_POWER]
 
-            # Get the value based on the index (position) in the data dictionary
-            raw_value = self.data[name]
+                    return 0
 
-            # Apply the processing function if provided
-            if attr_info[1]:
-                return attr_info[1](raw_value)
+                attr_info = self.attr_map.get(name)
+                if not attr_info:
+                    raise AttributeError(f"Attribute '{name}' not found in attr_map")
 
-            # Return the raw value if no processing function is specified
-            return raw_value
+                raw_value = self.data[name]
+
+                if attr_info[1]:
+                    return attr_info[1](raw_value)
+
+                return raw_value
+            
+            raise AttributeError(f"Attribute '{name}' not found in attr_map")
+        
         except (IndexError, KeyError) as e:
             raise AttributeError from e
 
@@ -264,8 +291,12 @@ class EsySunhomeBattery:
         try:
             data = json.loads(message.payload)
             val = data.get("val")
+            msgType = data.get("msgType")
+            valType = data.get("valType")
             if val:
                 battery_data = json.loads(val)
+                battery_data["msgType"] = msgType
+                battery_data["valType"] = valType
                 _LOGGER.debug("Received battery data: %s", battery_data)
                 state = BatteryState(battery_data)
                 listener.on_message(state)
@@ -278,8 +309,12 @@ class EsySunhomeBattery:
         """Send MQTT update request to controller."""
         await self.request_api_update()
 
-    async def set_value(self, name: str, value: Any) -> None:
-        """Nothing Implemented Yet"""
+    async def set_value(self, value_name: str, value: int) -> None:
+        if not self.api:
+            self.api = ESYSunhomeAPI(self.username, self.password, self.device_id)  
+
+        if (value_name == ATTR_SCHEDULE_MODE):
+            await self.api.set_mode(ATTR_SCHEDULE_MODE, value)
 
 
 async def main():

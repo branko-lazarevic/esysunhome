@@ -1,15 +1,12 @@
-import logging
 from homeassistant.components.sensor import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 from .coordinator import EsySunhomeCoordinator
-from .const import DOMAIN
-
-_LOGGER = logging.getLogger(__name__)
 
 PLATFORMS: list[Platform] = [
     Platform.BINARY_SENSOR,
     Platform.SENSOR,
+    Platform.SELECT,
 ]
 
 
@@ -30,4 +27,3 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         await entry.runtime_data.shutdown()
 
     return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
-

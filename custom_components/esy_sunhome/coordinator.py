@@ -65,7 +65,7 @@ class EsySunhomeCoordinator(DataUpdateCoordinator[BatteryState]):
         self._cancel_updates = async_track_time_interval(
             self.hass,
             self._async_request_update,
-            timedelta(seconds=30),
+            timedelta(seconds=15),
             cancel_on_shutdown=True,
         )
         self._fast_updates = fast
@@ -77,4 +77,3 @@ class EsySunhomeCoordinator(DataUpdateCoordinator[BatteryState]):
         """Shutdown the API."""
         if self.api:
             await self.api.disconnect()
-

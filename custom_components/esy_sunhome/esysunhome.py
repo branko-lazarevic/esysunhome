@@ -5,6 +5,7 @@ from .const import (
     ESY_API_LOGIN_ENDPOINT,
     ESY_API_DEVICE_ENDPOINT,
     ESY_API_OBTAIN_ENDPOINT,
+    ESY_API_MODE_ENDPOINT
 )
 from datetime import datetime, timedelta
 
@@ -157,15 +158,31 @@ class ESYSunhomeAPI:
 
         await session.close()
 
+    async def set_mode(self, mode: int):
+        """Call the mode endpoint to set the operation mode."""
+        await self.get_bearer_token()
 
-#Test script to run locally
-if __name__ == "__main__":
-    username = "testuser@test.com"
-    password = "password"
+        url = f"{ESY_API_BASE_URL}{ESY_API_MODE_ENDPOINT}"
+        headers = {"Authorization": f"bearer {self.access_token}"}
 
-    try:
-        api = ESYSunhomeAPI(username, password, None)
-        api.fetch_all_data()  # Start fetching data every 15 seconds
-    except Exception as e:
-        print(f"Error: {e}")
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, json={"mode": mode, "deviceId": self.device_id}, headers=headers) as response:
+                if response.status == 200:
+                    _LOGGER.debug(f"Mode successfully updated to {mode}")
+                else:
+                    raise Exception(
+                        f"Failed to set mode. Status code: {response.status}"
+                    )
 
+        await session.close()
+
+# Test script to run locally
+# if __name__ == "__main__":
+#     username = "testuser@test.com"
+#     password = "password"
+
+#     try:
+#         api = ESYSunhomeAPI(username, password, None)
+#         api.fetch_all_data()  # Start fetching data every 15 seconds
+#     except Exception as e:
+#         print(f"Error: {e}")

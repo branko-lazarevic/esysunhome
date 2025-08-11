@@ -1,6 +1,6 @@
 import logging
 
-from .const import (
+from custom_components.esy_sunhome.const import (
     ATTR_BATTERY_EXPORT,
     ATTR_BATTERY_IMPORT,
     ATTR_BATTERY_POWER,
@@ -15,7 +15,6 @@ from .const import (
     ATTR_LOAD_POWER,
     ATTR_PV_POWER,
     ATTR_RATED_POWER,
-    ATTR_SCHEDULE_MODE,
     ATTR_SOC,
     ATTR_SYSTEM_RUN_STATUS,
 )
@@ -28,6 +27,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
     UnitOfPower,
     UnitOfTemperature,
+    UnitOfEnergy
 )
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -54,7 +54,6 @@ async def async_setup_entry(
             BatteryExportSensor(coordinator=entry.runtime_data),
             GridImportSensor(coordinator=entry.runtime_data),
             GridExportSensor(coordinator=entry.runtime_data),
-            ScheduleModeSensor(coordinator=entry.runtime_data),
             DailyPowerGenSensor(coordinator=entry.runtime_data),
             RatedPowerSensor(coordinator=entry.runtime_data),
             BatteryStatusTextSensor(coordinator=entry.runtime_data),
@@ -147,13 +146,6 @@ class GridExportSensor(EsyPowerSensor):
     _attr_icon = "mdi:transmission-tower-export"
 
 
-class ScheduleModeSensor(EsySensorBase):
-    """Represents the current schedule mode."""
-
-    _attr_entity_registry_enabled_default = False
-    _attr_translation_key = ATTR_SCHEDULE_MODE
-
-
 class BatteryStatusSensor(EsySensorBase):
     """Represents the current battery status."""
 
@@ -172,9 +164,9 @@ class DailyPowerGenSensor(EsySensorBase):
     """Represents the current daily power generation."""
 
     _attr_translation_key = ATTR_DAILY_POWER_GEN
-    _attr_device_class = SensorDeviceClass.POWER
-    _attr_native_unit_of_measurement = UnitOfPower.KILO_WATT
-    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_device_class = SensorDeviceClass.ENERGY
+    _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
+    _attr_state_class = SensorStateClass.TOTAL
 
 
 class RatedPowerSensor(EsySensorBase):
@@ -191,6 +183,8 @@ class BatteryStatusTextSensor(EsySensorBase):
     """Represents the current battery status text."""
 
     _attr_entity_registry_enabled_default = False
+    _attr_device_class = SensorDeviceClass.ENUM
+    _attr_native_unit_of_measurement = None
     _attr_translation_key = ATTR_BATTERY_STATUS_TEXT
 
 
@@ -201,4 +195,3 @@ class InverterTempSensor(EsySensorBase):
     _attr_device_class = SensorDeviceClass.TEMPERATURE
     _attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
     _attr_state_class = SensorStateClass.MEASUREMENT
-
