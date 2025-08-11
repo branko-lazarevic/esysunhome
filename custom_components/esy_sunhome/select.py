@@ -41,7 +41,7 @@ class ModeSelect(EsySunhomeEntity, SelectEntity):
         """Set operating mode."""
         await self.coordinator.api.set_value(ATTR_SCHEDULE_MODE, self.get_mode_key(option))
 
-    def get_mode_key(value: str) -> int:
+    def get_mode_key(self, value: str) -> int:
         for key, mode in BatteryState.modes.items():
             if mode == value:
                 return key
