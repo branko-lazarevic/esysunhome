@@ -30,6 +30,7 @@ class ModeSelect(EsySunhomeEntity, SelectEntity):
     _attr_translation_key = ATTR_SCHEDULE_MODE
     _attr_options = list(BatteryState.modes.values())
     _attr_current_option = _attr_options[0]
+    _attr_name = "Operating Mode"
 
     @callback
     def _handle_coordinator_update(self) -> None:
