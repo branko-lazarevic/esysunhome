@@ -40,11 +40,12 @@ _LOGGER = logging.getLogger(__name__)
 class BatteryState:
     """Represents the current system state."""
 
+    # AI Mode isn't currently available and i don't see the other modes in the app so they're commented out for now
     modes = {
         1: "Regular Mode",
         2: "Emergency Mode",
         3: "Electricity Sell Mode",
-        4: "AI Mode",
+        #4: "AI Mode",
         5: "Battery Energy Management",
         # 6: "Battery Priority Mode",
         # 7: "Grid Priority Mode",

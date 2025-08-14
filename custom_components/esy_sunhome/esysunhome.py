@@ -6,6 +6,7 @@ from .const import (
     ESY_API_DEVICE_ENDPOINT,
     ESY_API_OBTAIN_ENDPOINT,
     ESY_API_MODE_ENDPOINT,
+    ESY_SCHEDULES_ENDPOINT,
     ATTR_SCHEDULE_MODE
 )
 from datetime import datetime, timedelta
@@ -174,6 +175,27 @@ class ESYSunhomeAPI:
                 if response.status == 200:
                     _LOGGER.debug(f"Mode successfully updated to {mode}")
                 else:
+                    raise Exception(
+                        f"Failed to set mode. Status code: {response.status}"
+                    )
+
+        await session.close()
+
+    async def update_schedule(self, mode: int):
+        """Call the schedule endpoint to set the fetch the current schedule, not yet implemented"""
+        await self.get_bearer_token()
+
+        url = f"{ESY_API_BASE_URL}{ESY_SCHEDULES_ENDPOINT}{self.device_id}"
+        headers = {"Authorization": f"bearer {self.access_token}"}
+
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, headers=headers) as response:
+                text = await response.text()
+                _LOGGER.debug(f"Response status: {response.status}")
+                if response.status != 200:
+                    _LOGGER.debug(f"Current schedule: {text}")
+                else:
+                    _LOGGER.debug(f"Failed to fetch current schedule: {text}")
                     raise Exception(
                         f"Failed to set mode. Status code: {response.status}"
                     )
