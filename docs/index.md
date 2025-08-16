@@ -19,7 +19,7 @@ I've included the yaml at the bottom of the page if you'd like to include a char
 
 It's worth noting that i have half hour net metering so so i have a bunch of half hour sensors.
 
-```yaml
+```yml
 hourly_cost:
   source: input_number.lifetime_energy_charge
   cycle: hourly
@@ -87,12 +87,11 @@ consumption_this_month:
   source: sensor.energy_to_home
   cycle: monthly
   unique_id: consumption_this_month
-
-```markdown
+```
 
 ## Sensors
 
-```yaml
+```yml
 - platform: integration
   source: sensor.esy_sunhome_battery_import
   name: Energy To Battery
@@ -152,8 +151,7 @@ consumption_this_month:
   method: left
   max_sub_interval:
     minutes: 1
-
-```markdown
+```
 
 ## Template & Stats sensors
 
@@ -296,14 +294,14 @@ sensor:
         precision: 0
 
 {% endraw %}
-```markdown
+```
 
 
 ## Automations
 
 These are some helper automations i tweak before i set the battery to import or export. I have set up the ESY "Battery Energy Management" mode to elecricity purchase from 00:00 to 23:59 so when i switch to this operating mode, i know it will charge the battery.. yours will be different if you haven't configured the mode.. This isn't yet available through the HACS integration but will be available soon.
 
-```yaml
+```yml
 {% raw %}
 alias: Stop Electricty Selling
 description: >-
@@ -428,13 +426,13 @@ actions:
 mode: single
 
 {% endraw %}
-```markdown
+```
 
 ## Dashboard
 
 In case you're interested in the components that make up my dashboard, i have a few HACS cards -> apexcharts card, card-mod.. here is the yaml:
 
-```yaml
+```yml
 {% raw %}
   - type: sections
     title: Energy Bill
@@ -1038,3 +1036,4 @@ In case you're interested in the components that make up my dashboard, i have a 
     max_columns: 2
     dense_section_placement: false
 {% endraw %}
+```
