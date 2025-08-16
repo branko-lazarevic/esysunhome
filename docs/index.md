@@ -155,7 +155,7 @@ consumption_this_month:
 
 ## Template & Stats sensors
 
-I created these using the UI, i haven't tested the yaml so please test that they work or just create them using the UI.
+> I created these using the UI, i haven't tested the yaml so please test that they work or just create them using the UI.
 
 ```yaml
 {% raw %}
@@ -299,7 +299,12 @@ sensor:
 
 ## Automations
 
-These are some helper automations i tweak before i set the battery to import or export. I have set up the ESY "Battery Energy Management" mode to elecricity purchase from 00:00 to 23:59 so when i switch to this operating mode, i know it will charge the battery.. yours will be different if you haven't configured the mode.. This isn't yet available through the HACS integration but will be available soon.
+> These are some helper automations i tweak before i set the battery to import or export. 
+> 
+> I set up the ESY "Battery Energy Management" mode to elecricity purchase from 00:00 to 23:59 so when i switch to this operating mode, i know it will charge the battery.. 
+> yours will be different if you haven't configured the mode.. This isn't yet available through the HACS integration but will be available soon.
+> 
+> Since i've only had my battery for under a month and some of the household is away on holiday, the consumption will soon increase but my plan is to forecast consumption and set a target battery capacity for each day to ensure there is enough power to sell and consume before the next day.
 
 ```yml
 {% raw %}
@@ -430,7 +435,16 @@ mode: single
 
 ## Dashboard
 
-In case you're interested in the components that make up my dashboard, i have a few HACS cards -> apexcharts card, card-mod.. here is the yaml:
+In case you're interested in the components that make up my dashboard.. here is the yaml:
+
+> The custom integrations / cards used:
+> 
+> *   Mushroom
+> *   apexcharts-card
+> *   card-mod
+> *   Power Flow Card Plus
+> *   Solcast PV Forecast
+> 
 
 ```yml
 {% raw %}
@@ -1037,3 +1051,9 @@ In case you're interested in the components that make up my dashboard, i have a 
     dense_section_placement: false
 {% endraw %}
 ```
+
+## Thank you
+
+*   For those who are looking to purchase/install a sunhome battery, get $50 off using my code: AU1587 when you register and set up the ESY sunhome app. 
+
+*   If like me, you're switching to Amber for wholesale rates (in Australia), you can use code QVLA4DT4 to get $120 off.
