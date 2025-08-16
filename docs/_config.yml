@@ -1,0 +1,7 @@
+title: ESY Sunhome battery - Home Assistant Integration
+description: A HACS integration for the ESY Sunhome battery
+plugins:
+  - jekyll-remote-theme
+remote_theme: pages-themes/modernist@v0.2.0
+url: https://branko-lazarevic.github.io
+baseurl: /esysunhome

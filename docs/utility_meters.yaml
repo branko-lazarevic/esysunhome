@@ -1,0 +1,67 @@
+hourly_cost:
+  source: input_number.lifetime_energy_charge
+  cycle: hourly
+  net_consumption: true
+  unique_id: hourly_cost
+
+daily_cost:
+  source: input_number.lifetime_energy_charge
+  cycle: daily
+  net_consumption: true
+  unique_id: daily_cost
+
+monthly_cost:
+  source: input_number.lifetime_energy_charge
+  cycle: monthly
+  net_consumption: true
+  unique_id: monthly_cost
+
+production_half_hourly:
+  source: sensor.energy_from_solar
+  cron: "*/30 * * * *"
+  unique_id: production_half_hourly
+  
+production_today:
+  source: sensor.energy_from_solar
+  cycle: daily
+  unique_id: production_today
+  
+production_this_month:
+  source: sensor.energy_from_solar
+  cycle: monthly
+  unique_id: production_this_month
+  
+consumption_half_hourly:
+  source: sensor.energy_to_home
+  cron: "*/30 * * * *"
+  unique_id: consumption_half_hourly
+  
+export_half_hourly:
+  source: sensor.energy_to_grid
+  cron: "*/30 * * * *"
+  unique_id: export_half_hourly
+  
+import_half_hourly:
+  source: sensor.energy_from_grid
+  cron: "*/30 * * * *"
+  unique_id: import_half_hourly
+  
+energy_to_battery_half_hourly:
+  source: sensor.energy_to_battery
+  cron: "*/30 * * * *"
+  unique_id: energy_to_battery_half_hourly
+  
+energy_from_battery_half_hourly:
+  source: sensor.energy_from_battery
+  cron: "*/30 * * * *"
+  unique_id: energy_from_battery_half_hourly
+  
+consumption_today:
+  source: sensor.energy_to_home
+  cycle: daily
+  unique_id: consumption_today
+  
+consumption_this_month:
+  source: sensor.energy_to_home
+  cycle: monthly
+  unique_id: consumption_this_month
