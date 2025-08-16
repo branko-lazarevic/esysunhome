@@ -5,3 +5,4 @@ plugins:
 remote_theme: pages-themes/modernist@v0.2.0
 url: https://branko-lazarevic.github.io
 baseurl: /esysunhome
+google_analytics: G-BE4PMGTL3M

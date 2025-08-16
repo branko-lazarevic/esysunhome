@@ -7,11 +7,11 @@ title: ESY Sunhome Battery Home Assistant Integration
 
 Here i'll be documenting my journey to optimize and automate my ESY sunhome battery. Prior to having the battery installed, i had a 10kW PV system so I had a bunch of existing automations to control devices.
 
-![ESY Sunhome Integration](/docs/screenshot.png)
+![ESY Sunhome Integration](screenshot.png)
 
 ## Dashboard
 
-![ESY Sunhome Integration](/docs/screenshot.png)
+![ESY Sunhome Integration](dashboard.png)
 
 I've included the yaml at the bottom of the page if you'd like to include a chart for your dashboard, firstly though i'll go over the sensors and you should also configure the energy dashboard based on the sensors created.
 
@@ -19,9 +19,7 @@ I've included the yaml at the bottom of the page if you'd like to include a char
 
 It's worth noting that i have half hour net metering so so i have a bunch of half hour sensors.
 
-{% raw %}
 ```yaml
-
 hourly_cost:
   source: input_number.lifetime_energy_charge
   cycle: hourly
@@ -90,14 +88,11 @@ consumption_this_month:
   cycle: monthly
   unique_id: consumption_this_month
 
-{% endraw %}
 ```markdown
 
 ## Sensors
 
-{% raw %}
 ```yaml
-
 - platform: integration
   source: sensor.esy_sunhome_battery_import
   name: Energy To Battery
@@ -158,17 +153,14 @@ consumption_this_month:
   max_sub_interval:
     minutes: 1
 
-
-{% endraw %}
 ```markdown
 
 ## Template & Stats sensors
 
 I created these using the UI, i haven't tested the yaml so please test that they work or just create them using the UI.
 
-{% raw %}
 ```yaml
-
+{% raw %}
 # -------------------------
 # TEMPLATE ENTITIES
 # -------------------------
@@ -311,9 +303,8 @@ sensor:
 
 These are some helper automations i tweak before i set the battery to import or export. I have set up the ESY "Battery Energy Management" mode to elecricity purchase from 00:00 to 23:59 so when i switch to this operating mode, i know it will charge the battery.. yours will be different if you haven't configured the mode.. This isn't yet available through the HACS integration but will be available soon.
 
-{% raw %}
 ```yaml
-
+{% raw %}
 alias: Stop Electricty Selling
 description: >-
   When battery charge drops below 51% or the feed-in price drops below 20c and
@@ -436,17 +427,15 @@ actions:
       entity_id: input_number.lifetime_energy_charge
 mode: single
 
-
 {% endraw %}
 ```markdown
-
 
 ## Dashboard
 
 In case you're interested in the components that make up my dashboard, i have a few HACS cards -> apexcharts card, card-mod.. here is the yaml:
 
-{% raw %}
 ```yaml
+{% raw %}
   - type: sections
     title: Energy Bill
     path: energy-bill
