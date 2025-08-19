@@ -4,7 +4,7 @@ This is an initial version of a custom component for the ESY Sunhome battery, it
 
 For those who are looking to purchase/install a sunhome battery, get $50 off using my code: AU1587 when you register and set up the ESY sunhome app. If like me, you're switching to Amber for wholesale rates, you can use code QVLA4DT4 to get $120 off.
 
-![Example Screenshot](/docs/screenshot.png)
+![Example Screenshot](/screenshot.png)
 
 Special thanks to airzone for documenting so much of the inner workings over at: [@airzone-sama](https://github.com/airzone-sama/esy_sunhome) 
 
