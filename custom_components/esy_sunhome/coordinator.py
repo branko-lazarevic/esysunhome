@@ -7,7 +7,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
-from .const import DOMAIN, CONF_DEVICE_ID, CONF_USERNAME, CONF_PASSWORD
+from .const import DOMAIN, CONF_DEVICE_ID, CONF_USERNAME, CONF_PASSWORD, CONF_ENABLE_POLLING, DEFAULT_ENABLE_POLLING
 from .battery import EsySunhomeBattery, MessageListener, BatteryState
 
 _LOGGER = logging.getLogger(__name__)
@@ -48,8 +48,16 @@ class EsySunhomeCoordinator(DataUpdateCoordinator[BatteryState]):
         self.api.connect(EsySunhomeMessageListener(self))
         self._fast_updates = True
         self._cancel_updates = None
+        self._polling_enabled = self.config_entry.options.get(
+            CONF_ENABLE_POLLING, DEFAULT_ENABLE_POLLING
+        )
 
         self.set_update_interval(fast=True)
+
+    def set_polling_enabled(self, enabled: bool) -> None:
+        """Enable or disable API polling."""
+        self._polling_enabled = enabled
+        _LOGGER.info("API polling %s", "enabled" if enabled else "disabled")
 
     def set_update_interval(self, fast: bool) -> None:
         """Adjust the update interval."""
@@ -71,7 +79,11 @@ class EsySunhomeCoordinator(DataUpdateCoordinator[BatteryState]):
         self._fast_updates = fast
 
     async def _async_request_update(self, _):
-        await self.api.request_update()
+        """Request update - only if polling is enabled."""
+        if self._polling_enabled:
+            await self.api.request_update()
+        else:
+            _LOGGER.debug("Polling disabled, skipping API update request")
 
     async def shutdown(self):
         """Shutdown the API."""

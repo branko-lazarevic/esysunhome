@@ -12,6 +12,8 @@ ESY_MQTT_BROKER_PORT = 1883
 CONF_USERNAME = "username"
 CONF_PASSWORD = "password"
 CONF_DEVICE_ID = "device_id"
+CONF_ENABLE_POLLING = "enable_polling"
+DEFAULT_ENABLE_POLLING = True
 
 ATTR_DEVICE_ID = "deviceId"
 ATTR_SOC = "batterySoc"

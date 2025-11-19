@@ -1,10 +1,36 @@
 import logging
 import voluptuous as vol
 from homeassistant import config_entries
+from homeassistant.core import callback
 from homeassistant.helpers import config_validation as cv
 from .esysunhome import ESYSunhomeAPI
+from .const import (
+    CONF_ENABLE_POLLING,
+    DEFAULT_ENABLE_POLLING,
+    ESY_API_BASE_URL,
+    ESY_API_DEVICE_ENDPOINT,
+)
 
 _LOGGER = logging.getLogger(__name__)
+
+
+async def fetch_devices(username: str, password: str):
+    """Fetch available devices/inverters."""
+    api = ESYSunhomeAPI(username, password, "")
+    await api.get_bearer_token()
+    # Fetch device info using the device endpoint
+    url = f"{ESY_API_BASE_URL}{ESY_API_DEVICE_ENDPOINT}"
+    headers = {"Authorization": f"bearer {api.access_token}"}
+    
+    import aiohttp
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url, headers=headers) as response:
+            if response.status == 200:
+                data = await response.json()
+                devices = data.get("data", {}).get("records", [])
+                return devices
+            else:
+                raise Exception(f"Failed to fetch devices. Status: {response.status}")
 
 
 class ESYSunhomeFlowHandler(config_entries.ConfigFlow, domain="esy_sunhome"):
@@ -18,6 +44,7 @@ class ESYSunhomeFlowHandler(config_entries.ConfigFlow, domain="esy_sunhome"):
         self.password = None
         self.device_id = None
         self.api = None
+        self.devices = []
 
     async def async_step_user(self, user_input=None):
         """Handle the first step for capturing username and password."""
@@ -29,13 +56,31 @@ class ESYSunhomeFlowHandler(config_entries.ConfigFlow, domain="esy_sunhome"):
             try:
                 self.api = ESYSunhomeAPI(
                     self.username, self.password, ""
-                )  # Dummy mqtt values for now
+                )
                 await self.api.get_bearer_token()  # Attempt to fetch the token
-                # If authentication succeeds, move to the next step
+                
+                # Automatically fetch available devices
+                self.devices = await fetch_devices(self.username, self.password)
+                
+                if not self.devices:
+                    _LOGGER.error("No devices found for this account")
+                    return self.async_show_form(
+                        step_id="user",
+                        data_schema=self.create_schema(),
+                        errors={"base": "no_devices"},
+                    )
+                
+                # If only one device, auto-select it
+                if len(self.devices) == 1:
+                    self.device_id = self.devices[0]["id"]
+                    return self._create_entry()
+                
+                # Multiple devices, show selection
                 return await self.async_step_device_id()
-            except Exception:
+                
+            except Exception as err:
                 _LOGGER.error(
-                    "Failed to authenticate with the provided username/password."
+                    "Failed to authenticate with the provided username/password: %s", err
                 )
                 return self.async_show_form(
                     step_id="user",
@@ -57,34 +102,75 @@ class ESYSunhomeFlowHandler(config_entries.ConfigFlow, domain="esy_sunhome"):
         )
 
     async def async_step_device_id(self, user_input=None):
-        """Handle the step to optionally capture the device ID."""
+        """Handle the step to select device ID from available devices."""
         if user_input is not None:
-            self.device_id = user_input.get("device_id")  # Device ID is optional
-            # Proceed with finishing the config flow
+            self.device_id = user_input.get("device_id")
             return self._create_entry()
 
-        # Ask for device ID if not provided
+        # Create device selection options
+        device_options = {}
+        for device in self.devices:
+            device_id = str(device.get("id", ""))
+            device_name = device.get("name", "Unknown")
+            device_options[device_id] = f"{device_name} ({device_id})"
+
+        # Show device selection form
         return self.async_show_form(
             step_id="device_id",
             data_schema=vol.Schema(
                 {
-                    vol.Optional("device_id", default=""): cv.string,
+                    vol.Required("device_id"): vol.In(device_options),
                 }
             ),
-            description_placeholders={"device_id": self.device_id or "None"},
         )
 
     def _create_entry(self):
         """Create the config entry."""
         return self.async_create_entry(
-            title="ESY Sunhome",
+            title=f"ESY Sunhome ({self.device_id})",
             data={
                 "username": self.username,
                 "password": self.password,
                 "device_id": self.device_id,
+            },
+            options={
+                CONF_ENABLE_POLLING: DEFAULT_ENABLE_POLLING,
             },
         )
 
     async def async_step_import(self, user_input=None):
         """Handle importing configuration."""
         return await self.async_step_user(user_input)
+
+    @staticmethod
+    @callback
+    def async_get_options_flow(config_entry):
+        """Get the options flow for this handler."""
+        return OptionsFlowHandler(config_entry)
+
+
+class OptionsFlowHandler(config_entries.OptionsFlow):
+    """Handle options flow for ESY Sunhome."""
+
+    def __init__(self, config_entry):
+        """Initialize options flow."""
+        self.config_entry = config_entry
+
+    async def async_step_init(self, user_input=None):
+        """Manage the options."""
+        if user_input is not None:
+            return self.async_create_entry(title="", data=user_input)
+
+        return self.async_show_form(
+            step_id="init",
+            data_schema=vol.Schema(
+                {
+                    vol.Optional(
+                        CONF_ENABLE_POLLING,
+                        default=self.config_entry.options.get(
+                            CONF_ENABLE_POLLING, DEFAULT_ENABLE_POLLING
+                        ),
+                    ): bool,
+                }
+            ),
+        )

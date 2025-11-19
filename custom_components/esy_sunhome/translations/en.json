@@ -1,4 +1,42 @@
 {
+    "config": {
+        "step": {
+            "user": {
+                "title": "Configure ESY Sunhome",
+                "description": "Enter your ESY Sunhome credentials",
+                "data": {
+                    "username": "Username",
+                    "password": "Password"
+                }
+            },
+            "device_id": {
+                "title": "Select Inverter",
+                "description": "Select your inverter from the available devices",
+                "data": {
+                    "device_id": "Inverter"
+                }
+            }
+        },
+        "error": {
+            "auth_failed": "Authentication failed. Please check your username and password.",
+            "no_devices": "No inverters found for this account.",
+            "cannot_connect": "Failed to connect to ESY Sunhome servers."
+        }
+    },
+    "options": {
+        "step": {
+            "init": {
+                "title": "ESY Sunhome Options",
+                "description": "Configure options for ESY Sunhome",
+                "data": {
+                    "enable_polling": "Enable API Polling"
+                },
+                "data_description": {
+                    "enable_polling": "When disabled, the integration will not request data updates from the API, but operating mode changes will still work."
+                }
+            }
+        }
+    },
     "entity": {
         "binary_sensor": {
             "gridLine": {
@@ -65,6 +103,11 @@
             },
             "batteryStatusText": {
                 "name": "Battery Status"
+            }
+        },
+        "switch": {
+            "api_polling": {
+                "name": "API Polling"
             }
         }
     }
