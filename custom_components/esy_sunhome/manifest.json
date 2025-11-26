@@ -4,11 +4,11 @@
   "dependencies": [],
   "documentation": "https://github.com/branko-lazarevic/esysunhome",
   "domain": "esy_sunhome",
-  "iot_class": "calculated",
+  "iot_class": "cloud_polling",
   "name": "ESY Sunhome",
   "requirements": [
     "aiomqtt>=2.0.1",
     "aiohttp>=3.8.3"
   ],
-  "version": "1.0.1"
+  "version": "1.1.2"
 }
