@@ -150,7 +150,10 @@ class ESYSunhomeAPI:
             return status, data
 
     async def get_bearer_token(self):
-        """Fetch the bearer token using the provided credentials asynchronously."""
+        """Fetch the bearer token using the provided credentials asynchronously.
+        
+        This method ONLY handles token management. Device fetching is separate.
+        """
         # Check if the token has expired
         if self.is_token_expired():
             _LOGGER.info("Access token expired, refreshing token")
@@ -161,6 +164,11 @@ class ESYSunhomeAPI:
             # If no token is available, authenticate
             await self.authenticate()
 
+    async def ensure_device_id(self):
+        """Ensure we have a device ID, fetching if necessary.
+        
+        Call this AFTER get_bearer_token() when device_id is needed.
+        """
         if self.device_id is None or self.device_id == "":
             await self.fetch_device()
 
@@ -193,9 +201,6 @@ class ESYSunhomeAPI:
 
                 _LOGGER.info("Successfully authenticated and retrieved access token")
                 _LOGGER.debug(f"Token expires in {expires_in} seconds")
-                
-                if self.device_id is None or self.device_id == "":
-                    await self.fetch_device()
             else:
                 error_text = await response.text()
                 _LOGGER.error(f"Authentication failed: {response.status} - {error_text}")
@@ -249,9 +254,6 @@ class ESYSunhomeAPI:
     @retry_with_backoff(max_retries=2, initial_delay=1.0)
     async def fetch_device(self):
         """Fetch the device (inverter) ID associated with the user."""
-        if not self.access_token:
-            raise AuthenticationError("Access token is required to fetch device ID")
-
         url = f"{ESY_API_BASE_URL}{ESY_API_DEVICE_ENDPOINT}"
         
         status, data = await self._make_request_with_auth("GET", url)
@@ -270,6 +272,8 @@ class ESYSunhomeAPI:
     @retry_with_backoff(max_retries=2, initial_delay=2.0)
     async def request_update(self):
         """Call the /api/param/set/obtain endpoint and publish data to MQTT."""
+        await self.ensure_device_id()
+        
         url = f"{ESY_API_BASE_URL}{ESY_API_OBTAIN_ENDPOINT}{self.device_id}"
         
         status, data = await self._make_request_with_auth("GET", url)
@@ -292,6 +296,8 @@ class ESYSunhomeAPI:
         Args:
             mode: The operating mode code to set
         """
+        await self.ensure_device_id()
+        
         url = f"{ESY_API_BASE_URL}{ESY_API_MODE_ENDPOINT}"
         
         _LOGGER.info(f"Setting mode to {mode} for device {self.device_id}")
@@ -322,6 +328,8 @@ class ESYSunhomeAPI:
 
     async def update_schedule(self, mode: int):
         """Call the schedule endpoint to fetch the current schedule, not yet implemented."""
+        await self.ensure_device_id()
+        
         url = f"{ESY_API_BASE_URL}{ESY_SCHEDULES_ENDPOINT}{self.device_id}"
         
         try:
