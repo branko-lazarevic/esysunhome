@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import random
+import string
 from typing import Any, Callable, Optional
 
 import aiomqtt
@@ -11,6 +13,8 @@ import aiomqtt
 from .const import (
     ESY_MQTT_BROKER_URL,
     ESY_MQTT_BROKER_PORT,
+    ESY_MQTT_USERNAME,
+    ESY_MQTT_PASSWORD,
     SYSTEM_RUN_MODES,
     BATTERY_STATUS_MAP,
     GRID_MODE_MAP,
@@ -462,14 +466,21 @@ class EsySunhomeBattery:
 
         while self._connected:
             try:
+                # Generate a random client ID like the app does: "Android" + 20 random chars
+                client_id = "Android" + ''.join(random.choices(
+                    string.ascii_letters + string.digits, k=20
+                ))
+                
                 async with aiomqtt.Client(
                     hostname=ESY_MQTT_BROKER_URL,
                     port=ESY_MQTT_BROKER_PORT,
-                    username="admin",
-                    password="3omKSLaDI7q27OhX",
+                    username=ESY_MQTT_USERNAME,
+                    password=ESY_MQTT_PASSWORD,
+                    identifier=client_id,
                 ) as self._client:
                     _LOGGER.info(
-                        "Connected to MQTT broker (authenticated), subscribing to %s",
+                        "Connected to MQTT broker (client_id=%s), subscribing to %s",
+                        client_id,
                         self.topic_up,
                     )
 
@@ -672,4 +683,3 @@ class EsySunhomeBattery:
 
 # Backwards compatibility alias
 BatteryState = InverterState
-
