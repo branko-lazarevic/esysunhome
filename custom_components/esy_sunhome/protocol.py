@@ -150,6 +150,8 @@ class MsgHeader:
     def from_bytes(cls, data: bytes) -> Optional['MsgHeader']:
         """Parse header from byte array"""
         if data is None or len(data) < HEADER_SIZE:
+            _LOGGER.debug("Header parse failed: data is None or too short (len=%d, need=%d)",
+                         len(data) if data else 0, HEADER_SIZE)
             return None
 
         config_id = bytes_to_uint32_be(data[0:4])
@@ -159,6 +161,16 @@ class MsgHeader:
         source_id = data[17] & 0xFF
         page_index = data[18] & 0xFF
         data_length = bytes_to_uint16_be(data[22], data[23])
+
+        _LOGGER.debug("Header parsed:")
+        _LOGGER.debug("  configId: %d (0x%08X)", config_id, config_id)
+        _LOGGER.debug("  msgId: %d (0x%08X)", msg_id, msg_id)
+        _LOGGER.debug("  userId: %s", user_id.hex())
+        _LOGGER.debug("  funCode: %d (0x%02X) - %s", fun_code, fun_code,
+                     {0x03: "READ", 0x06: "WRITE_SINGLE", 0x10: "WRITE_MULTIPLE", 0x83: "RESPONSE"}.get(fun_code, "UNKNOWN"))
+        _LOGGER.debug("  sourceId: %d (0x%02X)", source_id, source_id)
+        _LOGGER.debug("  pageIndex: %d", page_index)
+        _LOGGER.debug("  dataLength: %d bytes", data_length)
 
         return cls(
             config_id=config_id,
@@ -445,6 +457,7 @@ class PayloadParser:
     def parse_params_list(self, data: bytes) -> ParamsListBean:
         """Parse telemetry payload into ParamsListBean"""
         if not data:
+            _LOGGER.debug("PayloadParser: empty data")
             return ParamsListBean()
 
         self.data = data
@@ -453,8 +466,13 @@ class PayloadParser:
         result = ParamsListBean()
         result.segment_count = self._read_uint16()
 
-        for _ in range(result.segment_count):
+        _LOGGER.debug("PayloadParser: segment_count = %d", result.segment_count)
+        _LOGGER.debug("PayloadParser: total data length = %d bytes", len(data))
+
+        for seg_idx in range(result.segment_count):
             if self.position + 8 > len(self.data):
+                _LOGGER.debug("PayloadParser: not enough data for segment %d header (pos=%d, need=8, have=%d)",
+                             seg_idx, self.position, len(self.data) - self.position)
                 break
 
             segment = ParamSegment()
@@ -467,6 +485,16 @@ class PayloadParser:
             if self.position + value_bytes <= len(self.data):
                 segment.values = self.data[self.position:self.position + value_bytes]
                 self.position += value_bytes
+            else:
+                _LOGGER.debug("PayloadParser: segment %d truncated (need %d bytes, have %d)",
+                             seg_idx, value_bytes, len(self.data) - self.position)
+
+            _LOGGER.debug("  Segment[%d]: id=%d, type=%d, addr=%d (0x%04X), params=%d, values_len=%d",
+                         seg_idx, segment.segment_id, segment.segment_type,
+                         segment.segment_address, segment.segment_address,
+                         segment.params_num, len(segment.values))
+            if segment.values:
+                _LOGGER.debug("    Values (hex): %s", segment.values.hex())
 
             result.segments.append(segment)
 
@@ -549,40 +577,62 @@ class ESYTelemetryParser:
         Returns:
             TelemetryData object with parsed values, or None on error
         """
+        _LOGGER.debug("ESYTelemetryParser.parse_message() called")
+        _LOGGER.debug("  Input payload length: %d bytes", len(payload) if payload else 0)
+
         if not payload or len(payload) < HEADER_SIZE:
-            _LOGGER.debug("Payload too short")
+            _LOGGER.debug("  FAILED: Payload too short (need at least %d bytes)", HEADER_SIZE)
             return None
 
         # Parse header
+        _LOGGER.debug("  Parsing header...")
         header = MsgHeader.from_bytes(payload[:HEADER_SIZE])
         if header is None:
-            _LOGGER.debug("Failed to parse header")
+            _LOGGER.debug("  FAILED: Could not parse header")
             return None
-
-        _LOGGER.debug(
-            f"Header: funCode={header.fun_code}, dataLength={header.data_length}"
-        )
 
         # Extract data portion
         data_start = HEADER_SIZE
         data_end = data_start + header.data_length
+        actual_data_available = len(payload) - HEADER_SIZE
+
+        _LOGGER.debug("  Data extraction:")
+        _LOGGER.debug("    Header says data_length: %d bytes", header.data_length)
+        _LOGGER.debug("    Actual data available: %d bytes", actual_data_available)
+
         if data_end > len(payload):
+            _LOGGER.debug("    WARNING: Truncating data_end from %d to %d", data_end, len(payload))
             data_end = len(payload)
 
         data = payload[data_start:data_end]
+        _LOGGER.debug("    Extracted data: %d bytes", len(data))
 
         # Parse segments
+        _LOGGER.debug("  Parsing segments...")
         params = self.payload_parser.parse_params_list(data)
+        _LOGGER.debug("  Parsed %d segments", len(params.segments))
 
-        return self._build_telemetry_data(params)
+        # Build telemetry data
+        _LOGGER.debug("  Building telemetry data...")
+        result = self._build_telemetry_data(params)
+        _LOGGER.debug("  parse_message() complete")
+
+        return result
 
     def _build_telemetry_data(self, params: ParamsListBean) -> TelemetryData:
         """Build TelemetryData from parsed segments"""
         result = TelemetryData()
         all_values: Dict[str, Any] = {}
 
+        _LOGGER.debug("_build_telemetry_data: processing %d segments", len(params.segments))
+
         for segment in params.segments:
             self._parse_segment_values(segment, all_values)
+
+        # Log all parsed register values
+        _LOGGER.debug("All parsed register values (%d total):", len(all_values))
+        for key, value in sorted(all_values.items()):
+            _LOGGER.debug("  %s = %s", key, value)
 
         # Map parsed values to TelemetryData fields
         result.all_values = all_values
@@ -659,6 +709,9 @@ class ESYTelemetryParser:
         # In a full implementation, you'd map segment_address to specific keys
         # For now, we'll store raw values with address-based keys
 
+        _LOGGER.debug("  Parsing segment: addr=%d (0x%04X), params=%d",
+                     segment.segment_address, segment.segment_address, segment.params_num)
+
         for i in range(segment.params_num):
             offset = i * 2
             if offset + 2 <= len(segment.values):
@@ -666,8 +719,12 @@ class ESYTelemetryParser:
                 addr = segment.segment_address + i
 
                 # Store as signed value by default
-                value = bytes_to_int16_be(raw_bytes[0], raw_bytes[1])
-                all_values[f"reg_{addr}"] = value
+                signed_value = bytes_to_int16_be(raw_bytes[0], raw_bytes[1])
+                unsigned_value = bytes_to_uint16_be(raw_bytes[0], raw_bytes[1])
+                all_values[f"reg_{addr}"] = signed_value
+
+                _LOGGER.debug("    reg_%d (0x%04X): bytes=%s, signed=%d, unsigned=%d",
+                             addr, addr, raw_bytes.hex(), signed_value, unsigned_value)
 
 
 # =============================================================================

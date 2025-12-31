@@ -465,9 +465,11 @@ class EsySunhomeBattery:
                 async with aiomqtt.Client(
                     hostname=ESY_MQTT_BROKER_URL,
                     port=ESY_MQTT_BROKER_PORT,
+                    username=self.username,
+                    password=self.password,
                 ) as self._client:
                     _LOGGER.info(
-                        "Connected to MQTT broker, subscribing to %s",
+                        "Connected to MQTT broker (authenticated), subscribing to %s",
                         self.topic_up,
                     )
 
@@ -485,10 +487,18 @@ class EsySunhomeBattery:
                             _LOGGER.error("Error processing message: %s", e)
 
             except aiomqtt.MqttError as mqtt_err:
-                _LOGGER.warning(
-                    "MQTT connection error, will retry in 5s: %s",
-                    mqtt_err,
-                )
+                # Check for authentication errors (code 135 = Not authorized)
+                error_str = str(mqtt_err)
+                if "135" in error_str or "Not authorized" in error_str:
+                    _LOGGER.error(
+                        "MQTT authentication failed (code 135). Check credentials. Error: %s",
+                        mqtt_err,
+                    )
+                else:
+                    _LOGGER.warning(
+                        "MQTT connection error, will retry in 5s: %s",
+                        mqtt_err,
+                    )
                 self._client = None
             except asyncio.CancelledError:
                 _LOGGER.debug("MQTT listener cancelled")
@@ -519,27 +529,53 @@ class EsySunhomeBattery:
             _LOGGER.debug("Empty telemetry payload")
             return
 
-        _LOGGER.debug("Received telemetry: %d bytes", len(payload))
+        _LOGGER.debug("=" * 60)
+        _LOGGER.debug("MQTT TELEMETRY RECEIVED")
+        _LOGGER.debug("=" * 60)
+        _LOGGER.debug("Payload length: %d bytes", len(payload))
+        _LOGGER.debug("Raw payload (hex): %s", payload.hex())
+
+        # Log first 24 bytes (header) separately
+        if len(payload) >= 24:
+            _LOGGER.debug("Header bytes (first 24): %s", payload[:24].hex())
+            _LOGGER.debug("Data bytes (after header): %s", payload[24:].hex() if len(payload) > 24 else "(none)")
 
         # Parse binary protocol
+        _LOGGER.debug("Parsing binary protocol...")
         telemetry = self._parser.parse_message(payload)
 
         if telemetry is None:
             _LOGGER.warning("Failed to parse telemetry message")
+            _LOGGER.debug("Parser returned None - check protocol.py logs for details")
             return
 
         # Create state object
         state = InverterState(telemetry)
         self._last_state = state
 
-        _LOGGER.debug(
-            "Parsed telemetry: SOC=%d%%, PV=%dW, Battery=%dW, Grid=%dW, Load=%dW",
-            state.battery_soc,
-            state.pv_power,
-            state.battery_power,
-            state.grid_power,
-            state.load_power,
-        )
+        _LOGGER.debug("-" * 40)
+        _LOGGER.debug("PARSED TELEMETRY SUMMARY")
+        _LOGGER.debug("-" * 40)
+        _LOGGER.debug("Power Values:")
+        _LOGGER.debug("  PV Total: %dW (PV1=%dW, PV2=%dW)", state.pv_power, state.pv1_power, state.pv2_power)
+        _LOGGER.debug("  Battery: %dW", state.battery_power)
+        _LOGGER.debug("  Grid: %dW (CT1=%dW, CT2=%dW)", state.grid_power, state.ct1_power, state.ct2_power)
+        _LOGGER.debug("  Load: %dW", state.load_power)
+        _LOGGER.debug("Battery Info:")
+        _LOGGER.debug("  SOC: %d%%", state.battery_soc)
+        _LOGGER.debug("  Voltage: %.1fV, Current: %.1fA", state.battery_voltage, state.battery_current)
+        _LOGGER.debug("  Status: %s (%d)", state.battery_status_text, state.battery_status)
+        _LOGGER.debug("System Status:")
+        _LOGGER.debug("  Run Mode: %s (%d)", state.system_run_mode_text, state.system_run_mode)
+        _LOGGER.debug("  Run Status: %d", state.system_run_status)
+        _LOGGER.debug("  Grid Mode: %s (%d)", state.on_off_grid_mode_text, state.on_off_grid_mode)
+        _LOGGER.debug("Grid/Inverter:")
+        _LOGGER.debug("  Grid Voltage: %.1fV, Frequency: %.2fHz", state.grid_voltage, state.grid_frequency)
+        _LOGGER.debug("  Inverter Temp: %d°C", state.inv_temperature)
+        _LOGGER.debug("Energy Stats:")
+        _LOGGER.debug("  Daily Gen: %.1f kWh, Total Gen: %.1f kWh", state.daily_energy_generation, state.total_energy_generation)
+        _LOGGER.debug("  Daily Consumption: %.1f kWh", state.daily_power_consumption)
+        _LOGGER.debug("=" * 60)
 
         # Notify listener
         listener.on_message(state)

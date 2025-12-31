@@ -31,31 +31,36 @@ async def fetch_devices(username: str, password: str) -> tuple[list, str | None]
         Tuple of (devices list, user_id or None)
     """
     api = ESYSunhomeAPI(username, password, "")
-    await api.get_bearer_token()
+    try:
+        await api.get_bearer_token()
 
-    # Try to extract user_id from the login response
-    user_id = None
+        # Fetch device info using the device endpoint
+        url = f"{ESY_API_BASE_URL}{ESY_API_DEVICE_ENDPOINT}"
+        headers = {"Authorization": f"bearer {api.access_token}"}
 
-    # Fetch device info using the device endpoint
-    url = f"{ESY_API_BASE_URL}{ESY_API_DEVICE_ENDPOINT}"
-    headers = {"Authorization": f"bearer {api.access_token}"}
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, headers=headers) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    _LOGGER.debug("Device API response: %s", data)
+                    devices = data.get("data", {}).get("records", [])
 
-    async with aiohttp.ClientSession() as session:
-        async with session.get(url, headers=headers) as response:
-            if response.status == 200:
-                data = await response.json()
-                devices = data.get("data", {}).get("records", [])
+                    # Try to extract user_id from device data
+                    user_id = None
+                    if devices and len(devices) > 0:
+                        first_device = devices[0]
+                        # Try multiple possible field names for user ID
+                        user_id = first_device.get("userId") or first_device.get("user_id") or first_device.get("createBy")
+                        if user_id:
+                            user_id = str(user_id)
+                        _LOGGER.debug("Extracted user_id: %s from device: %s", user_id, first_device.get("id"))
 
-                # Try to extract user_id from device data if available
-                if devices and len(devices) > 0:
-                    # The user_id might be in the device record or we use the device's
-                    # associated user info
-                    first_device = devices[0]
-                    user_id = str(first_device.get("userId", ""))
-
-                return devices, user_id
-            else:
-                raise Exception(f"Failed to fetch devices. Status: {response.status}")
+                    return devices, user_id
+                else:
+                    raise Exception(f"Failed to fetch devices. Status: {response.status}")
+    finally:
+        # Always close the API session
+        await api.close_session()
 
 
 class ESYSunhomeFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
@@ -82,10 +87,7 @@ class ESYSunhomeFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
 
             # Check credentials by initializing the API and trying to authenticate
             try:
-                self.api = ESYSunhomeAPI(self.username, self.password, "")
-                await self.api.get_bearer_token()
-
-                # Automatically fetch available devices and user_id
+                # Fetch available devices and user_id (this validates credentials too)
                 self.devices, self.user_id = await fetch_devices(
                     self.username, self.password
                 )
