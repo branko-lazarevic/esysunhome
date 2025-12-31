@@ -360,6 +360,102 @@ ENERGY_FLOW_KEYS_SINGLE_PHASE = [
     "energyFlowGridPower", "energyFlowLoadTotalPower"
 ]
 
+# Register address to key name mapping by segment ID
+# Segment ID -> list of (offset, key_name, data_type, coefficient) tuples
+SEGMENT_KEY_MAP: Dict[int, List[tuple]] = {
+    # Segment 1: Run Information (typically segment_id=1)
+    1: [
+        (0, "systemRunMode", "unsigned", 1),
+        (1, "systemRunStatus", "unsigned", 1),
+    ],
+    # Segment 2: Basic Information
+    2: [
+        (0, "dcdcTemperature", "signed", 1),
+        (1, "busVoltage", "unsigned", 0.1),
+        (2, "dailyEnergyGeneration", "unsigned", 0.1),
+        (3, "totalEnergyGeneration", "unsigned", 0.1),  # 2 registers
+        (5, "ratedPower", "unsigned", 1),
+        (6, "outputRatedPower", "unsigned", 1),
+    ],
+    # Segment 3: PV Information
+    3: [
+        (0, "pv1voltage", "unsigned", 0.1),
+        (1, "pv1current", "unsigned", 0.1),
+        (2, "pv1Power", "unsigned", 1),
+        (3, "pv2voltage", "unsigned", 0.1),
+        (4, "pv2current", "unsigned", 0.1),
+        (5, "pv2Power", "unsigned", 1),
+    ],
+    # Segment 4: Battery Information
+    4: [
+        (0, "batteryStatus", "unsigned", 1),
+        (1, "batteryVoltage", "unsigned", 0.1),
+        (2, "batteryCurrent", "signed", 0.1),
+        (3, "batteryPower", "signed", 1),
+        (4, "battTotalSoc", "unsigned", 1),
+        (5, "batterySoc", "unsigned", 1),
+        (6, "battNum", "unsigned", 1),
+        (7, "battEnergy", "unsigned", 0.1),
+    ],
+    # Segment 5: Grid Information
+    5: [
+        (0, "gridStatus", "unsigned", 1),
+        (1, "gridFreq", "unsigned", 0.01),
+        (2, "gridVolt", "unsigned", 0.1),
+        (3, "gridActivePower", "signed", 1),
+        (4, "ct1Curr", "signed", 0.1),
+        (5, "ct1Power", "signed", 1),
+        (6, "ct2Curr", "signed", 0.1),
+        (7, "ct2Power", "signed", 1),
+        (8, "onOffGridMode", "unsigned", 1),
+    ],
+    # Segment 6: Inverter Information
+    6: [
+        (0, "invTemperature", "signed", 1),
+        (1, "invStatus", "unsigned", 1),
+        (2, "invOutputFreq", "unsigned", 0.01),
+        (3, "invOutputVolt", "unsigned", 0.1),
+        (4, "invOutputCurr", "unsigned", 0.1),
+        (5, "invApparentPower", "signed", 1),
+        (6, "invActivePower", "signed", 1),
+    ],
+    # Segment 7: Energy Flow
+    7: [
+        (0, "energyFlowPvTotalPower", "signed", 1),
+        (1, "energyFlowBattPower", "signed", 1),
+        (2, "energyFlowGridPower", "signed", 1),
+        (3, "energyFlowLoadTotalPower", "signed", 1),
+    ],
+    # Segment 8: Load Information
+    8: [
+        (0, "loadVolt", "unsigned", 0.1),
+        (1, "loadCurr", "unsigned", 0.1),
+        (2, "loadActivePower", "signed", 1),
+        (3, "loadRealTimePower", "signed", 1),
+    ],
+    # Segment 9: Energy Statistics
+    9: [
+        (0, "dailyPowerConsumption", "unsigned", 0.1),
+        (1, "totalEconsumption", "unsigned", 0.1),  # may be 2 registers
+        (3, "dailyGridConnectionPower", "unsigned", 0.1),
+        (4, "totalOnGridElecGenerated", "unsigned", 0.1),
+        (6, "dailyOnGridElecConsumption", "unsigned", 0.1),
+        (7, "totalOnGridElecConsumption", "unsigned", 0.1),
+        (9, "dailyBattChargeEnergy", "unsigned", 0.1),
+        (10, "totalBattChargeEnergy", "unsigned", 0.1),
+        (12, "dailyBattDischargeEnergy", "unsigned", 0.1),
+        (13, "totalBattDischargeEnergy", "unsigned", 0.1),
+    ],
+    # Segment 10: Settings
+    10: [
+        (0, "antiBackflowPowerPercentage", "unsigned", 1),
+        (1, "batteryChargingCurrent", "unsigned", 0.1),
+        (2, "batteryDischargeCurrent", "unsigned", 0.1),
+        (3, "onGridSocLimit", "unsigned", 1),
+        (4, "offGridSocLimit", "unsigned", 1),
+    ],
+}
+
 
 # =============================================================================
 # TELEMETRY DATA CONTAINER
@@ -704,21 +800,41 @@ class ESYTelemetryParser:
         segment: ParamSegment,
         all_values: Dict[str, Any]
     ) -> None:
-        """Parse values from a single segment"""
-        # This is a simplified implementation
-        # In a full implementation, you'd map segment_address to specific keys
-        # For now, we'll store raw values with address-based keys
+        """Parse values from a single segment using the key mapping"""
+        _LOGGER.debug("  Parsing segment: id=%d, addr=%d (0x%04X), params=%d",
+                     segment.segment_id, segment.segment_address, segment.segment_address, segment.params_num)
 
-        _LOGGER.debug("  Parsing segment: addr=%d (0x%04X), params=%d",
-                     segment.segment_address, segment.segment_address, segment.params_num)
-
+        # Try to use the segment key map first
+        key_map = SEGMENT_KEY_MAP.get(segment.segment_id, [])
+        
+        if key_map:
+            # Use the predefined key mapping for this segment type
+            for offset, key_name, data_type, coefficient in key_map:
+                if offset * 2 + 2 <= len(segment.values):
+                    raw_bytes = segment.values[offset * 2:offset * 2 + 2]
+                    
+                    if data_type == "signed":
+                        raw_value = bytes_to_int16_be(raw_bytes[0], raw_bytes[1])
+                    else:
+                        raw_value = bytes_to_uint16_be(raw_bytes[0], raw_bytes[1])
+                    
+                    # Apply coefficient
+                    if coefficient != 1:
+                        value = raw_value * coefficient
+                    else:
+                        value = raw_value
+                    
+                    all_values[key_name] = value
+                    _LOGGER.debug("    %s = %s (raw=%d, coeff=%s)", 
+                                 key_name, value, raw_value, coefficient)
+        
+        # Also store raw register values for debugging and unmapped registers
         for i in range(segment.params_num):
             offset = i * 2
             if offset + 2 <= len(segment.values):
                 raw_bytes = segment.values[offset:offset+2]
                 addr = segment.segment_address + i
 
-                # Store as signed value by default
                 signed_value = bytes_to_int16_be(raw_bytes[0], raw_bytes[1])
                 unsigned_value = bytes_to_uint16_be(raw_bytes[0], raw_bytes[1])
                 all_values[f"reg_{addr}"] = signed_value
