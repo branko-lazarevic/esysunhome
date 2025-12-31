@@ -13,6 +13,9 @@ ESY_SCHEDULES_ENDPOINT = "/api/lsydevicechargedischarge/info?deviceId="
 # MQTT Configuration - v2.0.0 binary protocol
 ESY_MQTT_BROKER_URL = "abroadtcp.esysunhome.com"
 ESY_MQTT_BROKER_PORT = 1883
+# MQTT broker credentials (hardcoded in APK - same for all users)
+ESY_MQTT_USERNAME = "admin"
+ESY_MQTT_PASSWORD = "3omKSLaDI7q27OhX"
 
 # MQTT Topics (v2.0.0 - binary protocol)
 # Telemetry FROM inverter: /ESY/PVVC/{device_id}/UP
