@@ -27,6 +27,7 @@ ESY_MQTT_PASSWORD = "3omKSLaDI7q27OhX"
 CONF_USERNAME = "username"
 CONF_PASSWORD = "password"
 CONF_DEVICE_ID = "device_id"
+CONF_DEVICE_SN = "device_sn"  # Serial number / MAC address for MQTT topics
 CONF_USER_ID = "user_id"
 CONF_ENABLE_POLLING = "enable_polling"
 DEFAULT_ENABLE_POLLING = True
