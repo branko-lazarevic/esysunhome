@@ -465,8 +465,8 @@ class EsySunhomeBattery:
                 async with aiomqtt.Client(
                     hostname=ESY_MQTT_BROKER_URL,
                     port=ESY_MQTT_BROKER_PORT,
-                    username=self.username,
-                    password=self.password,
+                    username="admin",
+                    password="3omKSLaDI7q27OhX",
                 ) as self._client:
                     _LOGGER.info(
                         "Connected to MQTT broker (authenticated), subscribing to %s",
@@ -672,3 +672,4 @@ class EsySunhomeBattery:
 
 # Backwards compatibility alias
 BatteryState = InverterState
+
