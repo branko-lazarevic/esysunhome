@@ -6,7 +6,7 @@ ESY_API_DEVICE_ENDPOINT = "/api/lsydevice/page?current=1&size=1"
 ESY_API_OBTAIN_ENDPOINT = "/api/param/set/obtain?val=3&deviceId="
 ESY_API_MODE_ENDPOINT = "/api/lsypattern/switch"
 ESY_SCHEDULES_ENDPOINT = "/api/lsydevicechargedischarge/info?deviceId="
-ESY_MQTT_BROKER_URL = "99.83.178.210"
+ESY_MQTT_BROKER_URL = "abroadtcp.esysunhome.com"
 ESY_MQTT_BROKER_PORT = 1883
 
 CONF_USERNAME = "username"
