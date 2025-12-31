@@ -16,6 +16,7 @@ from .const import (
     DOMAIN,
     CONF_ENABLE_POLLING,
     CONF_USER_ID,
+    CONF_DEVICE_SN,
     DEFAULT_ENABLE_POLLING,
     ESY_API_BASE_URL,
     ESY_API_DEVICE_ENDPOINT,
@@ -24,11 +25,11 @@ from .const import (
 _LOGGER = logging.getLogger(__name__)
 
 
-async def fetch_devices(username: str, password: str) -> tuple[list, str | None]:
+async def fetch_devices(username: str, password: str) -> tuple[list, str | None, dict]:
     """Fetch available devices/inverters and user ID.
 
     Returns:
-        Tuple of (devices list, user_id or None)
+        Tuple of (devices list, user_id or None, device_sn_map)
     """
     api = ESYSunhomeAPI(username, password, "")
     try:
@@ -47,6 +48,8 @@ async def fetch_devices(username: str, password: str) -> tuple[list, str | None]
 
                     # Try to extract user_id from device data
                     user_id = None
+                    device_sn_map = {}  # Maps device_id -> deviceSn
+                    
                     if devices and len(devices) > 0:
                         first_device = devices[0]
                         # Try multiple possible field names for user ID
@@ -54,8 +57,16 @@ async def fetch_devices(username: str, password: str) -> tuple[list, str | None]
                         if user_id:
                             user_id = str(user_id)
                         _LOGGER.debug("Extracted user_id: %s from device: %s", user_id, first_device.get("id"))
+                        
+                        # Build device_id -> deviceSn mapping
+                        for device in devices:
+                            dev_id = str(device.get("id", ""))
+                            dev_sn = device.get("deviceSn") or device.get("sn") or device.get("serialNumber")
+                            if dev_id and dev_sn:
+                                device_sn_map[dev_id] = dev_sn
+                                _LOGGER.debug("Device %s has serial number: %s", dev_id, dev_sn)
 
-                    return devices, user_id
+                    return devices, user_id, device_sn_map
                 else:
                     raise Exception(f"Failed to fetch devices. Status: {response.status}")
     finally:
@@ -66,16 +77,18 @@ async def fetch_devices(username: str, password: str) -> tuple[list, str | None]
 class ESYSunhomeFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for the ESY Sunhome integration."""
 
-    VERSION = 2  # Bumped version for v2.0.0
+    VERSION = 3  # Bumped version for device_sn support
 
     def __init__(self) -> None:
         """Initialize the flow handler."""
         self.username: str | None = None
         self.password: str | None = None
         self.device_id: str | None = None
+        self.device_sn: str | None = None  # Serial number for MQTT topics
         self.user_id: str | None = None
         self.api: ESYSunhomeAPI | None = None
         self.devices: list = []
+        self.device_sn_map: dict = {}  # Maps device_id -> deviceSn
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -88,7 +101,7 @@ class ESYSunhomeFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
             # Check credentials by initializing the API and trying to authenticate
             try:
                 # Fetch available devices and user_id (this validates credentials too)
-                self.devices, self.user_id = await fetch_devices(
+                self.devices, self.user_id, self.device_sn_map = await fetch_devices(
                     self.username, self.password
                 )
 
@@ -103,6 +116,7 @@ class ESYSunhomeFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
                 # If only one device, auto-select it
                 if len(self.devices) == 1:
                     self.device_id = str(self.devices[0]["id"])
+                    self.device_sn = self.device_sn_map.get(self.device_id)
                     return self._create_entry()
 
                 # Multiple devices, show selection
@@ -140,6 +154,7 @@ class ESYSunhomeFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
         """Handle the step to select device ID from available devices."""
         if user_input is not None:
             self.device_id = user_input.get("device_id")
+            self.device_sn = self.device_sn_map.get(self.device_id)
             return self._create_entry()
 
         # Create device selection options
@@ -147,7 +162,12 @@ class ESYSunhomeFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
         for device in self.devices:
             device_id = str(device.get("id", ""))
             device_name = device.get("name", "Unknown")
-            device_options[device_id] = f"{device_name} ({device_id})"
+            device_sn = device.get("deviceSn", "")
+            # Show serial number in the selection if available
+            if device_sn:
+                device_options[device_id] = f"{device_name} ({device_sn})"
+            else:
+                device_options[device_id] = f"{device_name} ({device_id})"
 
         # Show device selection form
         return self.async_show_form(
@@ -161,12 +181,16 @@ class ESYSunhomeFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
 
     def _create_entry(self) -> config_entries.ConfigFlowResult:
         """Create the config entry."""
+        # Use serial number in title if available
+        title = f"ESY Sunhome ({self.device_sn or self.device_id})"
+        
         return self.async_create_entry(
-            title=f"ESY Sunhome ({self.device_id})",
+            title=title,
             data={
                 "username": self.username,
                 "password": self.password,
                 "device_id": self.device_id,
+                CONF_DEVICE_SN: self.device_sn,  # Serial number for MQTT topics
                 CONF_USER_ID: self.user_id,
             },
             options={
