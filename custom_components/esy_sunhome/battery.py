@@ -465,9 +465,11 @@ class EsySunhomeBattery:
                 async with aiomqtt.Client(
                     hostname=ESY_MQTT_BROKER_URL,
                     port=ESY_MQTT_BROKER_PORT,
+                    username=self.username,
+                    password=self.password,
                 ) as self._client:
                     _LOGGER.info(
-                        "Connected to MQTT broker, subscribing to %s",
+                        "Connected to MQTT broker (authenticated), subscribing to %s",
                         self.topic_up,
                     )
 
@@ -485,10 +487,18 @@ class EsySunhomeBattery:
                             _LOGGER.error("Error processing message: %s", e)
 
             except aiomqtt.MqttError as mqtt_err:
-                _LOGGER.warning(
-                    "MQTT connection error, will retry in 5s: %s",
-                    mqtt_err,
-                )
+                # Check for authentication errors (code 135 = Not authorized)
+                error_str = str(mqtt_err)
+                if "135" in error_str or "Not authorized" in error_str:
+                    _LOGGER.error(
+                        "MQTT authentication failed (code 135). Check credentials. Error: %s",
+                        mqtt_err,
+                    )
+                else:
+                    _LOGGER.warning(
+                        "MQTT connection error, will retry in 5s: %s",
+                        mqtt_err,
+                    )
                 self._client = None
             except asyncio.CancelledError:
                 _LOGGER.debug("MQTT listener cancelled")
