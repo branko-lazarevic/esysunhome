@@ -13,6 +13,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from .const import (
     DOMAIN,
     CONF_DEVICE_ID,
+    CONF_DEVICE_SN,
     CONF_USERNAME,
     CONF_PASSWORD,
     CONF_USER_ID,
@@ -55,17 +56,30 @@ class EsySunhomeCoordinator(DataUpdateCoordinator[InverterState]):
         username = self.config_entry.data[CONF_USERNAME]
         password = self.config_entry.data[CONF_PASSWORD]
         device_id = self.config_entry.data.get(CONF_DEVICE_ID)
+        device_sn = self.config_entry.data.get(CONF_DEVICE_SN)
         user_id = self.config_entry.data.get(CONF_USER_ID)
 
+        # Use device_sn (serial number) for MQTT topics, fall back to device_id
+        mqtt_device_id = device_sn or device_id
+        
+        if not device_sn:
+            _LOGGER.warning(
+                "No device serial number (device_sn) found in config. "
+                "Using device_id for MQTT topics. This may not work correctly. "
+                "Please reconfigure the integration to get the serial number."
+            )
+
         # Initialize battery controller with v2.0.0 binary protocol
+        # Pass device_sn for MQTT topics
         self.api = EsySunhomeBattery(
             username=username,
             password=password,
-            device_id=device_id,
+            device_id=mqtt_device_id,  # This is used for MQTT topics
             user_id=user_id,
         )
 
         # Initialize REST API client for mode setting and other operations
+        # REST API uses the numeric device_id
         self._rest_api = ESYSunhomeAPI(username, password, device_id)
         self.api.api = self._rest_api  # Link REST API to battery controller
 
@@ -82,8 +96,9 @@ class EsySunhomeCoordinator(DataUpdateCoordinator[InverterState]):
         self.set_update_interval(fast=True)
 
         _LOGGER.info(
-            "Coordinator initialized for device %s (user_id: %s)",
+            "Coordinator initialized for device %s (sn=%s, user_id=%s)",
             device_id,
+            device_sn or "not set",
             user_id or "not set",
         )
 
