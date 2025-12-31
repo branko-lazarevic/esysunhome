@@ -1,341 +1,638 @@
+"""ESY Sunhome Battery MQTT Client - v2.0.0 Binary Protocol."""
+
+from __future__ import annotations
+
 import asyncio
-import contextlib
-import json
 import logging
-from typing import Any
-from unicodedata import name
+from typing import Any, Callable, Optional
 
 import aiomqtt
-from .esysunhome import ESYSunhomeAPI
+
 from .const import (
-    ATTR_DEVICE_ID,
-    ATTR_SOC,
-    ATTR_GRID_POWER,
-    ATTR_LOAD_POWER,
-    ATTR_BATTERY_POWER,
-    ATTR_PV_POWER,
-    ATTR_BATTERY_IMPORT,
-    ATTR_BATTERY_EXPORT,
-    ATTR_GRID_IMPORT,
-    ATTR_GRID_EXPORT,
-    ATTR_GRID_ACTIVE,
-    ATTR_LOAD_ACTIVE,
-    ATTR_PV_ACTIVE,
-    ATTR_BATTERY_ACTIVE,
-    ATTR_SCHEDULE_MODE,
-    ATTR_HEATER_STATE,
-    ATTR_BATTERY_STATUS,
-    ATTR_SYSTEM_RUN_STATUS,
-    ATTR_DAILY_POWER_GEN,
-    ATTR_RATED_POWER,
-    ATTR_INVERTER_TEMP,
-    ATTR_BATTERY_STATUS_TEXT,
     ESY_MQTT_BROKER_URL,
     ESY_MQTT_BROKER_PORT,
+    SYSTEM_RUN_MODES,
+    BATTERY_STATUS_MAP,
+    GRID_MODE_MAP,
+)
+from .protocol import (
+    ESYTelemetryParser,
+    ESYCommandBuilder,
+    TelemetryData,
+    get_mqtt_topics,
 )
 
 _LOGGER = logging.getLogger(__name__)
 
 
-class BatteryState:
-    """Represents the current system state."""
+class InverterState:
+    """Represents the current inverter state parsed from binary MQTT protocol."""
 
-    # AI Mode isn't currently available and i don't see the other modes in the app so they're commented out for now
-    modes = {
-        1: "Regular Mode",
-        2: "Emergency Mode",
-        3: "Electricity Sell Mode",
-        #4: "AI Mode",
-        5: "Battery Energy Management",
-        # 6: "Battery Priority Mode",
-        # 7: "Grid Priority Mode",
-        # 8: "AC Charging Off & Backup Mode",
-        # 9: "PV Mode",
-        # 10: "Forced Off-grid Mode",
-    }
+    modes = SYSTEM_RUN_MODES
 
-    attr_map = {
-        ATTR_DEVICE_ID: (
-            0,
-            None,
-            None,
-        ),  # Assuming deviceId is directly returned as an integer
-        ATTR_SOC: (
-            1,
-            lambda x: x,
-            None,
-        ),  # State of Charge, just return the raw value (percentage)
-        ATTR_GRID_POWER: (2, lambda x: x, None),  # Grid Power, raw value (W)
-        ATTR_LOAD_POWER: (3, lambda x: x, None),  # Load Power, raw value (W)
-        ATTR_BATTERY_POWER: (4, lambda x: x, None),  # Battery Power, raw value (W)
-        ATTR_PV_POWER: (5, lambda x: x, None),  # PV Power, raw value (W)
-        ATTR_BATTERY_IMPORT: (
-            6,
-            lambda x: x if x > 0 else 0,
-            None,
-        ),  # Battery Import, 0 if value <= 0
-        ATTR_BATTERY_EXPORT: (
-            7,
-            lambda x: x if x > 0 else 0,
-            None,
-        ),  # Battery Export, 0 if value <= 0
-        ATTR_GRID_IMPORT: (
-            8,
-            lambda x: x if x > 0 else 0,
-            None,
-        ),  # Grid Import, 0 if value <= 0
-        ATTR_GRID_EXPORT: (
-            9,
-            lambda x: x if x > 0 else 0,
-            None,
-        ),  # Grid Export, 0 if value <= 0
-        ATTR_GRID_ACTIVE: (
-            10,
-            lambda x: x,
-            None,
-        ),  # Grid Active, raw value (could be 0, 1, or 2)
-        ATTR_LOAD_ACTIVE: (
-            11,
-            lambda x: x,
-            None,
-        ),  # Load Active, raw value (could be 0 or 1)
-        ATTR_PV_ACTIVE: (
-            12,
-            lambda x: x,
-            None,
-        ),  # PV Active, raw value (could be 0 or 1)
-        ATTR_BATTERY_ACTIVE: (
-            13,
-            lambda x: x,
-            None,
-        ),  # Battery Active, raw value (could be 0 or 1)
-        ATTR_SCHEDULE_MODE: (
-            14,
-            lambda x: BatteryState.modes.get(x, "Unknown Mode"),
-            None,
-        ),
-        ATTR_HEATER_STATE: (
-            15,
-            lambda x: x,
-            None,
-        ),  # Heater State, raw value (N/A, 0, etc.)
-        ATTR_BATTERY_STATUS: (
-            16,
-            lambda x: "Idle"
-            if x == 0
-            else "Charging"
-            if x == 1
-            else "In Use"
-            if x == 5
-            else "Unknown",
-            None,
-        ),  # Map battery status code
-        ATTR_SYSTEM_RUN_STATUS: (
-            17,
-            lambda x: x,
-            None,
-        ),  # System Run Status, raw value (integer)
-        ATTR_DAILY_POWER_GEN: (
-            18,
-            lambda x: x,
-            None,
-        ),  # Daily Power Generation, raw value (kWh)
-        ATTR_RATED_POWER: (19, lambda x: x, None),  # Rated Power, raw value (kW)
-        ATTR_INVERTER_TEMP: (
-            20,
-            lambda x: x,
-            None,
-        ),  # Inverter Temperature, raw value (Celsius)
-        ATTR_BATTERY_STATUS_TEXT: (
-            21,
-            lambda x: "Idle"
-            if x == 0
-            else "Charging"
-            if x == 1
-            else "In Use"
-            if x == 5
-            else f"Unknown {x}",
-            None,
-        ),  # Battery status text mapping
-    }
+    def __init__(self, telemetry: TelemetryData) -> None:
+        """Initialize with parsed telemetry data."""
+        self._telemetry = telemetry
 
-    def __init__(self, data: dict) -> None:
-        """Initialise with mqtt data."""
-        self.data = data
+    @property
+    def telemetry(self) -> TelemetryData:
+        """Get the raw telemetry data."""
+        return self._telemetry
 
-    def __getattr__(self, name: str):
-        """Return a processed attribute."""
-        try:
-            if self.data["msgType"] == 0 and self.data["valType"] == 7:
-                if name in [ATTR_INVERTER_TEMP]:
-                    return self.data['dataList'][5]['dataList'][0]['val']
-            elif self.data["msgType"] == 0 and self.data["valType"] == 0:
-                if name in [
-                    ATTR_GRID_IMPORT,
-                    ATTR_GRID_EXPORT,
-                    ATTR_BATTERY_IMPORT,
-                    ATTR_BATTERY_EXPORT,
-                ]:
-                    if (name == ATTR_GRID_IMPORT and self.data["gridLine"] == 2) or (
-                        name == ATTR_GRID_EXPORT and self.data["gridLine"] == 1
-                    ):
-                        return self.data[ATTR_GRID_POWER]
-                    if (name == ATTR_BATTERY_IMPORT and self.data["batteryLine"] == 2) or (
-                        name == ATTR_BATTERY_EXPORT and self.data["batteryLine"] == 1
-                    ):
-                        return self.data[ATTR_BATTERY_POWER]
+    # Power values
+    @property
+    def pv_power(self) -> int:
+        """Total PV power in watts."""
+        return self._telemetry.pv_power
 
-                    return 0
+    @property
+    def pv1_power(self) -> int:
+        """PV1 power in watts."""
+        return self._telemetry.pv1_power
 
-                attr_info = self.attr_map.get(name)
-                if not attr_info:
-                    raise AttributeError(f"Attribute '{name}' not found in attr_map")
+    @property
+    def pv2_power(self) -> int:
+        """PV2 power in watts."""
+        return self._telemetry.pv2_power
 
-                raw_value = self.data[name]
+    @property
+    def battery_power(self) -> int:
+        """Battery power in watts (positive = charging, negative = discharging)."""
+        return self._telemetry.battery_power
 
-                if attr_info[1]:
-                    return attr_info[1](raw_value)
+    @property
+    def grid_power(self) -> int:
+        """Grid power in watts (positive = import, negative = export)."""
+        return self._telemetry.grid_power
 
-                return raw_value
-            
-            raise AttributeError(f"Attribute '{name}' not found in attr_map")
-        
-        except (IndexError, KeyError) as e:
-            raise AttributeError from e
+    @property
+    def load_power(self) -> int:
+        """Load power in watts."""
+        return self._telemetry.load_power
+
+    @property
+    def ct1_power(self) -> int:
+        """CT1 power in watts."""
+        return self._telemetry.ct1_power
+
+    @property
+    def ct2_power(self) -> int:
+        """CT2 power in watts."""
+        return self._telemetry.ct2_power
+
+    # Battery information
+    @property
+    def battery_soc(self) -> int:
+        """Battery state of charge in percent."""
+        return self._telemetry.battery_soc
+
+    @property
+    def battery_voltage(self) -> float:
+        """Battery voltage in volts."""
+        return self._telemetry.battery_voltage
+
+    @property
+    def battery_current(self) -> float:
+        """Battery current in amps."""
+        return self._telemetry.battery_current
+
+    @property
+    def battery_status(self) -> int:
+        """Battery status code."""
+        return self._telemetry.battery_status
+
+    @property
+    def battery_status_text(self) -> str:
+        """Battery status as text."""
+        return BATTERY_STATUS_MAP.get(self._telemetry.battery_status, f"Unknown ({self._telemetry.battery_status})")
+
+    # PV details
+    @property
+    def pv1_voltage(self) -> float:
+        """PV1 voltage in volts."""
+        return self._telemetry.pv1_voltage
+
+    @property
+    def pv1_current(self) -> float:
+        """PV1 current in amps."""
+        return self._telemetry.pv1_current
+
+    @property
+    def pv2_voltage(self) -> float:
+        """PV2 voltage in volts."""
+        return self._telemetry.pv2_voltage
+
+    @property
+    def pv2_current(self) -> float:
+        """PV2 current in amps."""
+        return self._telemetry.pv2_current
+
+    # Grid details
+    @property
+    def grid_voltage(self) -> float:
+        """Grid voltage in volts."""
+        return self._telemetry.grid_voltage
+
+    @property
+    def grid_frequency(self) -> float:
+        """Grid frequency in Hz."""
+        return self._telemetry.grid_frequency
+
+    @property
+    def grid_status(self) -> int:
+        """Grid status code."""
+        return self._telemetry.grid_status
+
+    @property
+    def on_off_grid_mode(self) -> int:
+        """On/off grid mode (0=off-grid, 1=on-grid)."""
+        return self._telemetry.on_off_grid_mode
+
+    @property
+    def on_off_grid_mode_text(self) -> str:
+        """On/off grid mode as text."""
+        return GRID_MODE_MAP.get(self._telemetry.on_off_grid_mode, "Unknown")
+
+    # Inverter details
+    @property
+    def inv_temperature(self) -> int:
+        """Inverter temperature in Celsius."""
+        return self._telemetry.inv_temperature
+
+    @property
+    def inv_output_voltage(self) -> float:
+        """Inverter output voltage in volts."""
+        return self._telemetry.inv_output_voltage
+
+    @property
+    def inv_output_frequency(self) -> float:
+        """Inverter output frequency in Hz."""
+        return self._telemetry.inv_output_frequency
+
+    @property
+    def inv_status(self) -> int:
+        """Inverter status code."""
+        return self._telemetry.inv_status
+
+    # System status
+    @property
+    def system_run_mode(self) -> int:
+        """System run mode code."""
+        return self._telemetry.system_run_mode
+
+    @property
+    def system_run_mode_text(self) -> str:
+        """System run mode as text."""
+        return SYSTEM_RUN_MODES.get(self._telemetry.system_run_mode, f"Unknown ({self._telemetry.system_run_mode})")
+
+    @property
+    def system_run_status(self) -> int:
+        """System run status code."""
+        return self._telemetry.system_run_status
+
+    # Energy statistics
+    @property
+    def daily_energy_generation(self) -> float:
+        """Daily energy generation in kWh."""
+        return self._telemetry.daily_energy_generation
+
+    @property
+    def total_energy_generation(self) -> float:
+        """Total energy generation in kWh."""
+        return self._telemetry.total_energy_generation
+
+    @property
+    def daily_power_consumption(self) -> float:
+        """Daily power consumption in kWh."""
+        return self._telemetry.daily_power_consumption
+
+    @property
+    def total_power_consumption(self) -> float:
+        """Total power consumption in kWh."""
+        return self._telemetry.total_power_consumption
+
+    @property
+    def daily_batt_charge_energy(self) -> float:
+        """Daily battery charge energy in kWh."""
+        return self._telemetry.daily_batt_charge_energy
+
+    @property
+    def daily_batt_discharge_energy(self) -> float:
+        """Daily battery discharge energy in kWh."""
+        return self._telemetry.daily_batt_discharge_energy
+
+    @property
+    def daily_grid_import(self) -> float:
+        """Daily grid import in kWh."""
+        return self._telemetry.daily_grid_import
+
+    @property
+    def daily_grid_export(self) -> float:
+        """Daily grid export in kWh."""
+        return self._telemetry.daily_grid_export
+
+    # Other
+    @property
+    def rated_power(self) -> int:
+        """Rated power in watts."""
+        return self._telemetry.rated_power
+
+    @property
+    def anti_backflow_percentage(self) -> int:
+        """Anti-backflow power percentage."""
+        return self._telemetry.anti_backflow_percentage
+
+    @property
+    def heating_state(self) -> int:
+        """Heating state code."""
+        return self._telemetry.heating_state
+
+    # Computed values for backwards compatibility
+    @property
+    def battery_import(self) -> int:
+        """Battery charging power (positive when charging)."""
+        return max(0, self._telemetry.battery_power)
+
+    @property
+    def battery_export(self) -> int:
+        """Battery discharging power (positive when discharging)."""
+        return max(0, -self._telemetry.battery_power)
+
+    @property
+    def grid_import(self) -> int:
+        """Grid import power (positive when importing)."""
+        return max(0, self._telemetry.grid_power)
+
+    @property
+    def grid_export(self) -> int:
+        """Grid export power (positive when exporting)."""
+        return max(0, -self._telemetry.grid_power)
+
+    # Active status flags
+    @property
+    def pv_active(self) -> bool:
+        """Whether PV is generating power."""
+        return self._telemetry.pv_power > 0
+
+    @property
+    def battery_active(self) -> bool:
+        """Whether battery is active (charging or discharging)."""
+        return self._telemetry.battery_power != 0
+
+    @property
+    def grid_active(self) -> bool:
+        """Whether grid is active."""
+        return self._telemetry.grid_status > 0 or self._telemetry.grid_power != 0
+
+    @property
+    def load_active(self) -> bool:
+        """Whether load is active."""
+        return self._telemetry.load_power > 0
+
+    # For backwards compatibility - alias
+    @property
+    def batterySoc(self) -> int:
+        """Alias for battery_soc (backwards compatibility)."""
+        return self.battery_soc
+
+    @property
+    def gridPower(self) -> int:
+        """Alias for grid_power (backwards compatibility)."""
+        return self.grid_power
+
+    @property
+    def loadPower(self) -> int:
+        """Alias for load_power (backwards compatibility)."""
+        return self.load_power
+
+    @property
+    def batteryPower(self) -> int:
+        """Alias for battery_power (backwards compatibility)."""
+        return self.battery_power
+
+    @property
+    def pvPower(self) -> int:
+        """Alias for pv_power (backwards compatibility)."""
+        return self.pv_power
+
+    @property
+    def batteryImport(self) -> int:
+        """Alias for battery_import (backwards compatibility)."""
+        return self.battery_import
+
+    @property
+    def batteryExport(self) -> int:
+        """Alias for battery_export (backwards compatibility)."""
+        return self.battery_export
+
+    @property
+    def gridImport(self) -> int:
+        """Alias for grid_import (backwards compatibility)."""
+        return self.grid_import
+
+    @property
+    def gridExport(self) -> int:
+        """Alias for grid_export (backwards compatibility)."""
+        return self.grid_export
+
+    @property
+    def dailyPowerGeneration(self) -> float:
+        """Alias for daily_energy_generation (backwards compatibility)."""
+        return self.daily_energy_generation
+
+    @property
+    def inverterTemp(self) -> int:
+        """Alias for inv_temperature (backwards compatibility)."""
+        return self.inv_temperature
+
+    @property
+    def batteryStatusText(self) -> str:
+        """Alias for battery_status_text (backwards compatibility)."""
+        return self.battery_status_text
+
+    @property
+    def gridLine(self) -> int:
+        """Grid line status for backwards compatibility."""
+        # 0 = inactive, 1 = exporting, 2 = importing
+        if self._telemetry.grid_power > 0:
+            return 2  # Importing
+        elif self._telemetry.grid_power < 0:
+            return 1  # Exporting
+        return 0  # Inactive
+
+    @property
+    def batteryLine(self) -> int:
+        """Battery line status for backwards compatibility."""
+        # 0 = inactive, 1 = discharging, 2 = charging
+        if self._telemetry.battery_power > 0:
+            return 2  # Charging
+        elif self._telemetry.battery_power < 0:
+            return 1  # Discharging
+        return 0  # Inactive
+
+    @property
+    def pvLine(self) -> int:
+        """PV line status for backwards compatibility."""
+        return 1 if self._telemetry.pv_power > 0 else 0
+
+    @property
+    def loadLine(self) -> int:
+        """Load line status for backwards compatibility."""
+        return 1 if self._telemetry.load_power > 0 else 0
+
+    @property
+    def code(self) -> str:
+        """Operating mode name for backwards compatibility."""
+        return self.system_run_mode_text
 
 
 class MessageListener:
-    """Message Listener."""
+    """Message Listener interface."""
 
     def __init__(self, coordinator) -> None:
-        """Initialise listener."""
+        """Initialize listener."""
         self.coordinator = coordinator
 
-    def on_message(self, state: BatteryState) -> None:
+    def on_message(self, state: InverterState) -> None:
         """Handle incoming messages."""
+        import contextlib
         with contextlib.suppress(AttributeError):
             self.coordinator.set_update_interval(fast=True)
         self.coordinator.async_set_updated_data(state)
 
 
 class EsySunhomeBattery:
-    """EsySunhome Battery Controller."""
+    """ESY Sunhome Battery Controller using v2.0.0 binary MQTT protocol."""
 
-    def __init__(self, username: str, password: str, device_id: str) -> None:
-        """Initialize."""
+    def __init__(
+        self,
+        username: str,
+        password: str,
+        device_id: str,
+        user_id: Optional[str] = None,
+    ) -> None:
+        """Initialize the battery controller.
+
+        Args:
+            username: API username
+            password: API password
+            device_id: Device ID for MQTT topics
+            user_id: User ID for MQTT commands (optional)
+        """
         self.username = username
         self.password = password
         self.device_id = device_id
-        self.subscribe_topic = f"/APP/{device_id}/NEWS"
+        self.user_id = user_id or ""
+
+        # MQTT topics (v2.0.0 binary protocol)
+        self._topics = get_mqtt_topics(device_id)
+        self.topic_up = self._topics["up"]
+        self.topic_down = self._topics["down"]
+        self.topic_alarm = self._topics["alarm"]
+
+        # Protocol handlers
+        self._parser = ESYTelemetryParser()
+        self._command_builder: Optional[ESYCommandBuilder] = None
+        if user_id:
+            self._command_builder = ESYCommandBuilder(user_id)
+
+        # MQTT state
+        self._client: Optional[aiomqtt.Client] = None
+        self._connected = False
+        self._listener_task: Optional[asyncio.Task] = None
+        self._last_state: Optional[InverterState] = None
+
+        # API client (for fallback operations like mode setting via REST)
         self.api = None
 
-        self._client = None
-        self._connected = False
-        self._listener_task = None
-
-    async def request_api_update(self):
-        """Trigger the API call to publish data"""
-        if not self.api:
-            self.api = ESYSunhomeAPI(self.username, self.password, self.device_id)
-        await self.api.request_update()
+        _LOGGER.info(
+            "Initialized battery controller for device %s with topics: UP=%s, DOWN=%s",
+            device_id,
+            self.topic_up,
+            self.topic_down,
+        )
 
     def connect(self, listener: MessageListener) -> None:
         """Connect to MQTT server and subscribe for updates."""
         self._listener_task = asyncio.create_task(self._listen(listener))
 
-    async def _listen(self, listener: MessageListener):
-        loop = asyncio.get_running_loop()
-
+    async def _listen(self, listener: MessageListener) -> None:
+        """Main MQTT listening loop."""
         self._connected = True
+
         while self._connected:
             try:
                 async with aiomqtt.Client(
-                    hostname=ESY_MQTT_BROKER_URL, port=ESY_MQTT_BROKER_PORT
+                    hostname=ESY_MQTT_BROKER_URL,
+                    port=ESY_MQTT_BROKER_PORT,
                 ) as self._client:
-                    _LOGGER.debug("Connected, subscribing to %s", self.subscribe_topic)
+                    _LOGGER.info(
+                        "Connected to MQTT broker, subscribing to %s",
+                        self.topic_up,
+                    )
 
-                    await self._client.subscribe(self.subscribe_topic)
+                    # Subscribe to telemetry and alarm topics
+                    await self._client.subscribe(self.topic_up)
+                    await self._client.subscribe(self.topic_alarm)
 
-                    # Request initial update if necessary
-                    await self.request_api_update()
+                    _LOGGER.info("Subscribed to MQTT topics")
 
-                    # process messages
+                    # Process messages
                     async for message in self._client.messages:
-                        self._process_message(message, listener)
+                        try:
+                            self._process_message(message, listener)
+                        except Exception as e:
+                            _LOGGER.error("Error processing message: %s", e)
 
             except aiomqtt.MqttError as mqtt_err:
-                _LOGGER.warning("Waiting for retry, error: %s", mqtt_err)
+                _LOGGER.warning(
+                    "MQTT connection error, will retry in 5s: %s",
+                    mqtt_err,
+                )
                 self._client = None
+            except asyncio.CancelledError:
+                _LOGGER.debug("MQTT listener cancelled")
+                raise
             except Exception as e:
                 _LOGGER.error("Exception in MQTT loop: %s", e)
             finally:
-                await asyncio.sleep(5)
+                if self._connected:
+                    await asyncio.sleep(5)
+
+    def _process_message(self, message: aiomqtt.Message, listener: MessageListener) -> None:
+        """Process incoming MQTT message."""
+        topic = str(message.topic)
+        payload = message.payload
+
+        if topic == self.topic_up:
+            # Telemetry message (binary)
+            self._handle_telemetry(payload, listener)
+        elif topic == self.topic_alarm:
+            # Alarm message
+            self._handle_alarm(payload)
+        else:
+            _LOGGER.debug("Unknown topic: %s", topic)
+
+    def _handle_telemetry(self, payload: bytes, listener: MessageListener) -> None:
+        """Handle incoming telemetry message."""
+        if not payload:
+            _LOGGER.debug("Empty telemetry payload")
+            return
+
+        _LOGGER.debug("Received telemetry: %d bytes", len(payload))
+
+        # Parse binary protocol
+        telemetry = self._parser.parse_message(payload)
+
+        if telemetry is None:
+            _LOGGER.warning("Failed to parse telemetry message")
+            return
+
+        # Create state object
+        state = InverterState(telemetry)
+        self._last_state = state
+
+        _LOGGER.debug(
+            "Parsed telemetry: SOC=%d%%, PV=%dW, Battery=%dW, Grid=%dW, Load=%dW",
+            state.battery_soc,
+            state.pv_power,
+            state.battery_power,
+            state.grid_power,
+            state.load_power,
+        )
+
+        # Notify listener
+        listener.on_message(state)
+
+    def _handle_alarm(self, payload: bytes) -> None:
+        """Handle incoming alarm message."""
+        _LOGGER.warning("Alarm received: %s", payload.hex() if payload else "empty")
 
     async def disconnect(self) -> None:
-        """Disconnect from MQTT Server."""
+        """Disconnect from MQTT server."""
         if self._listener_task is None:
             return
+
         self._connected = False
         self._listener_task.cancel()
+
         try:
             await self._listener_task
         except asyncio.CancelledError:
-            _LOGGER.debug("listener is cancelled")
+            _LOGGER.debug("Listener task cancelled")
+
         self._listener_task = None
         self._client = None
 
-    def _process_message(self, message, listener: MessageListener):
+    async def send_command(
+        self,
+        register_address: int,
+        value: int,
+    ) -> bool:
+        """Send a command to the inverter via MQTT.
+
+        Args:
+            register_address: The register address to write to
+            value: The value to write
+
+        Returns:
+            True if command was sent successfully
+        """
+        if not self._command_builder:
+            _LOGGER.error("Cannot send command: no user_id configured")
+            return False
+
+        if not self._client:
+            _LOGGER.error("Cannot send command: not connected to MQTT")
+            return False
+
         try:
-            data = json.loads(message.payload)
-            val = data.get("val")
-            msgType = data.get("msgType")
-            valType = data.get("valType")
-            if val:
-                battery_data = json.loads(val)
-                battery_data["msgType"] = msgType
-                battery_data["valType"] = valType
-                _LOGGER.debug("Received battery data: %s", battery_data)
-                state = BatteryState(battery_data)
-                listener.on_message(state)
-            else:
-                _LOGGER.warning("No valid battery data found")
-        except (json.JSONDecodeError, IndexError, AttributeError) as e:
-            _LOGGER.error("Error processing data(%s): %s", e, message.payload)
+            command = self._command_builder.build_write_command(
+                register_address,
+                value,
+            )
+
+            await self._client.publish(self.topic_down, command)
+            _LOGGER.info(
+                "Sent command to register %d with value %d",
+                register_address,
+                value,
+            )
+            return True
+        except Exception as e:
+            _LOGGER.error("Failed to send command: %s", e)
+            return False
 
     async def request_update(self) -> None:
-        """Send MQTT update request to controller."""
-        await self.request_api_update()
+        """Request an update from the inverter.
+
+        For the v2.0.0 protocol, the inverter pushes data automatically.
+        This method is kept for backwards compatibility but may use the
+        REST API fallback if configured.
+        """
+        if self.api:
+            try:
+                await self.api.request_update()
+            except Exception as e:
+                _LOGGER.debug("REST API update request failed: %s", e)
 
     async def set_value(self, value_name: str, value: int) -> None:
-        if not self.api:
-            self.api = ESYSunhomeAPI(self.username, self.password, self.device_id)  
+        """Set a value on the inverter.
 
-        if (value_name == ATTR_SCHEDULE_MODE):
-            await self.api.set_mode(value)
+        Args:
+            value_name: The name of the value to set (e.g., "code" for mode)
+            value: The value to set
+        """
+        from .const import ATTR_SCHEDULE_MODE
 
-
-async def main():
-    """Test harness."""
-
-    class LogMessageListener(MessageListener):
-        def on_message(self, state: BatteryState) -> None:
-            _LOGGER.info(state)
-
-    esy_battery = EsySunhomeBattery(
-	username="user@test.com",
-	password="password",
-        device_id=12345
-    )  # Replace with your actual device ID
-
-    await esy_battery.connect(LogMessageListener())
-
-    while True:
-        _LOGGER.debug("Requesting update")
-        await esy_battery.request_update()
-        await asyncio.sleep(10)
+        if value_name == ATTR_SCHEDULE_MODE:
+            # Mode setting - use REST API for now as MQTT command
+            # register addresses need to be mapped
+            if self.api:
+                await self.api.set_mode(value)
+            else:
+                _LOGGER.warning("Cannot set mode: API not initialized")
 
 
-if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
-    asyncio.run(main())
-
+# Backwards compatibility alias
+BatteryState = InverterState

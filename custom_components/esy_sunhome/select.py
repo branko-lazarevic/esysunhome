@@ -1,3 +1,7 @@
+"""ESY Sunhome select platform for operating mode."""
+
+from __future__ import annotations
+
 import asyncio
 import logging
 
@@ -7,9 +11,9 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.exceptions import HomeAssistantError
 
-from .battery import BatteryState
+from .battery import InverterState
 from .entity import EsySunhomeEntity
-from .const import ATTR_SCHEDULE_MODE
+from .const import ATTR_SCHEDULE_MODE, SYSTEM_RUN_MODES
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -38,8 +42,8 @@ class ModeSelect(EsySunhomeEntity, SelectEntity):
     """Represents the operating mode with optimistic updates during retries only."""
 
     _attr_translation_key = ATTR_SCHEDULE_MODE
-    _attr_options = list(BatteryState.modes.values())
-    _attr_current_option = _attr_options[0]
+    _attr_options = list(SYSTEM_RUN_MODES.values())
+    _attr_current_option = _attr_options[0] if _attr_options else None
     _attr_name = "Operating Mode"
     _attr_icon = ICON_NORMAL
 
@@ -77,8 +81,8 @@ class ModeSelect(EsySunhomeEntity, SelectEntity):
         """
         # Try to get the mode name from MQTT data
         try:
-            # schedule_mode returns the mode NAME (string like "Regular Mode")
-            mqtt_mode_name = getattr(self.coordinator.data, ATTR_SCHEDULE_MODE, None)
+            # system_run_mode_text returns the mode NAME (string like "Regular Mode")
+            mqtt_mode_name = self.coordinator.data.system_run_mode_text
         except (AttributeError, KeyError, TypeError) as e:
             _LOGGER.debug(f"Could not get mode from coordinator data: {e}")
             mqtt_mode_name = None
@@ -383,16 +387,16 @@ class ModeSelect(EsySunhomeEntity, SelectEntity):
             f"(retry {self._retry_count + 1}/{MAX_RETRIES + 1})"
         )
 
-    def get_mode_key(self, value: str) -> int:
+    def get_mode_key(self, value: str) -> int | None:
         """Get the mode code (int) for a given mode name (string).
-        
+
         Args:
             value: The operating mode name (e.g., "Regular Mode")
-            
+
         Returns:
             The mode code (integer) or None if not found
         """
-        for key, mode in BatteryState.modes.items():
+        for key, mode in SYSTEM_RUN_MODES.items():
             if mode == value:
                 return key
         return None
