@@ -296,27 +296,74 @@ class DynamicTelemetryParser:
         result["gridLine"] = 1 if result["gridPower"] != 0 else 0
         
         # === BATTERY POWER ===
-        batt_power = (
+        # The battery power value may be:
+        # 1. Signed: positive=charging, negative=discharging
+        # 2. Unsigned/absolute: direction from batteryLine or batteryStatus
+        #
+        # batteryLine: 1=discharging, 2=charging
+        # batteryStatus: 1=charging, 2=discharging
+        
+        raw_batt_power = (
             values.get("batteryPower") or
             values.get("energyFlowBatt", 0) or 0
         )
+        
+        # Get direction indicators
+        batt_line = values.get("batteryLine") or values.get("battLine") or 0
+        batt_status = values.get("batteryStatus") or values.get("battChgStatus") or 0
+        
+        # Determine if we need to apply direction from status fields
+        # If raw value is already signed (negative), trust it
+        if raw_batt_power < 0:
+            # Already signed negative = discharging
+            batt_power = raw_batt_power
+            is_charging = False
+            is_discharging = True
+        elif raw_batt_power > 0:
+            # Positive value - check if we need to flip sign based on status
+            # batteryLine: 1=discharging, 2=charging
+            # batteryStatus: 1=charging, 2=discharging
+            if batt_line == 1 or batt_status == 2:
+                # Discharging - make negative
+                batt_power = -abs(raw_batt_power)
+                is_charging = False
+                is_discharging = True
+            elif batt_line == 2 or batt_status == 1:
+                # Charging - keep positive
+                batt_power = abs(raw_batt_power)
+                is_charging = True
+                is_discharging = False
+            else:
+                # No direction info - assume positive = charging (convention)
+                batt_power = raw_batt_power
+                is_charging = True
+                is_discharging = False
+        else:
+            batt_power = 0
+            is_charging = False
+            is_discharging = False
+        
         result["batteryPower"] = batt_power
         
-        # Directional battery power (+charging, -discharging)
-        if batt_power > 0:
-            result["batteryImport"] = batt_power  # Charging
+        # Directional battery power for HA sensors
+        if is_charging:
+            result["batteryImport"] = abs(batt_power)  # Charging
             result["batteryExport"] = 0
             result["batteryStatusText"] = "Charging"
-        elif batt_power < 0:
+            result["batteryLine"] = 2
+        elif is_discharging:
             result["batteryImport"] = 0
             result["batteryExport"] = abs(batt_power)  # Discharging
             result["batteryStatusText"] = "Discharging"
+            result["batteryLine"] = 1
         else:
             result["batteryImport"] = 0
             result["batteryExport"] = 0
             result["batteryStatusText"] = "Idle"
+            result["batteryLine"] = 0
         
-        result["batteryLine"] = 1 if batt_power != 0 else 0
+        _LOGGER.debug("Battery: raw=%d, line=%d, status=%d -> power=%d (%s)",
+                     raw_batt_power, batt_line, batt_status, batt_power, result["batteryStatusText"])
         
         # === LOAD POWER ===
         load_power = (
