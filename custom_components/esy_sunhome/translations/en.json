@@ -32,7 +32,7 @@
                     "enable_polling": "Enable API Polling"
                 },
                 "data_description": {
-                    "enable_polling": "When disabled, the integration will rely on MQTT push updates only. The inverter automatically pushes data, so polling is optional."
+                    "enable_polling": "When disabled, the integration will not request data updates from the API, but operating mode changes will still work."
                 }
             }
         }
@@ -53,9 +53,6 @@
             },
             "heatingState": {
                 "name": "Inverter Heating State"
-            },
-            "onOffGridMode": {
-                "name": "On-Grid Mode"
             }
         },
         "sensor": {
@@ -106,82 +103,11 @@
             },
             "batteryStatusText": {
                 "name": "Battery Status"
-            },
-            "pv1Power": {
-                "name": "PV1 Power"
-            },
-            "pv2Power": {
-                "name": "PV2 Power"
-            },
-            "pv1Voltage": {
-                "name": "PV1 Voltage"
-            },
-            "pv1Current": {
-                "name": "PV1 Current"
-            },
-            "pv2Voltage": {
-                "name": "PV2 Voltage"
-            },
-            "pv2Current": {
-                "name": "PV2 Current"
-            },
-            "batteryVoltage": {
-                "name": "Battery Voltage"
-            },
-            "batteryCurrent": {
-                "name": "Battery Current"
-            },
-            "gridVoltage": {
-                "name": "Grid Voltage"
-            },
-            "gridFrequency": {
-                "name": "Grid Frequency"
-            },
-            "invOutputVoltage": {
-                "name": "Inverter Output Voltage"
-            },
-            "invOutputFrequency": {
-                "name": "Inverter Output Frequency"
-            },
-            "totalEnergyGeneration": {
-                "name": "Total Energy Generation"
-            },
-            "dailyPowerConsumption": {
-                "name": "Daily Power Consumption"
-            },
-            "totalPowerConsumption": {
-                "name": "Total Power Consumption"
-            },
-            "dailyBattChargeEnergy": {
-                "name": "Daily Battery Charge"
-            },
-            "dailyBattDischargeEnergy": {
-                "name": "Daily Battery Discharge"
-            },
-            "dailyGridImportEnergy": {
-                "name": "Daily Grid Import"
-            },
-            "dailyGridExportEnergy": {
-                "name": "Daily Grid Export"
-            },
-            "systemRunMode": {
-                "name": "System Run Mode"
-            },
-            "ct1Power": {
-                "name": "CT1 Power"
-            },
-            "ct2Power": {
-                "name": "CT2 Power"
             }
         },
         "switch": {
             "api_polling": {
                 "name": "API Polling"
-            }
-        },
-        "select": {
-            "code": {
-                "name": "Operating Mode"
             }
         }
     }

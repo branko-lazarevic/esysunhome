@@ -1,7 +1,5 @@
 """ESY Sunhome Data Update Coordinator."""
 
-from __future__ import annotations
-
 import contextlib
 from datetime import timedelta
 import logging
@@ -16,32 +14,30 @@ from .const import (
     CONF_DEVICE_SN,
     CONF_USERNAME,
     CONF_PASSWORD,
-    CONF_USER_ID,
     CONF_ENABLE_POLLING,
     DEFAULT_ENABLE_POLLING,
 )
-from .battery import EsySunhomeBattery, MessageListener, InverterState
-from .esysunhome import ESYSunhomeAPI
+from .battery import EsySunhomeBattery, MessageListener, BatteryState
 
 _LOGGER = logging.getLogger(__name__)
 
 
 class EsySunhomeMessageListener(MessageListener):
-    """Process incoming MQTT messages."""
+    """Process incoming messages."""
 
-    def __init__(self, coordinator: EsySunhomeCoordinator) -> None:
+    def __init__(self, coordinator) -> None:
         """Initialize listener."""
         self.coordinator = coordinator
 
-    def on_message(self, state: InverterState) -> None:
+    def on_message(self, state: BatteryState) -> None:
         """Handle incoming messages."""
         with contextlib.suppress(AttributeError):
             self.coordinator.set_update_interval(True)
         self.coordinator.async_set_updated_data(state)
 
 
-class EsySunhomeCoordinator(DataUpdateCoordinator[InverterState]):
-    """Class to fetch data from ESY Sunhome Inverter via MQTT."""
+class EsySunhomeCoordinator(DataUpdateCoordinator[BatteryState]):
+    """Class to fetch data from EsySunhome Battery Controller."""
 
     def __init__(self, hass: HomeAssistant) -> None:
         """Initialize coordinator."""
@@ -52,41 +48,22 @@ class EsySunhomeCoordinator(DataUpdateCoordinator[InverterState]):
             always_update=False,
         )
 
-        # Get configuration from config entry
-        username = self.config_entry.data[CONF_USERNAME]
-        password = self.config_entry.data[CONF_PASSWORD]
-        device_id = self.config_entry.data.get(CONF_DEVICE_ID)
-        device_sn = self.config_entry.data.get(CONF_DEVICE_SN)
-        user_id = self.config_entry.data.get(CONF_USER_ID)
+        device_id = self.config_entry.data[CONF_DEVICE_ID]
+        # Use device_sn for MQTT topic, fall back to device_id
+        device_sn = self.config_entry.data.get(CONF_DEVICE_SN, device_id)
 
-        # Use device_sn (serial number) for MQTT topics, fall back to device_id
-        mqtt_device_id = device_sn or device_id
-        
-        if not device_sn:
-            _LOGGER.warning(
-                "No device serial number (device_sn) found in config. "
-                "Using device_id for MQTT topics. This may not work correctly. "
-                "Please reconfigure the integration to get the serial number."
-            )
-
-        # Initialize battery controller with v2.0.0 binary protocol
-        # Pass device_sn for MQTT topics
-        self.api = EsySunhomeBattery(
-            username=username,
-            password=password,
-            device_id=mqtt_device_id,  # This is used for MQTT topics
-            user_id=user_id,
+        _LOGGER.info(
+            "Initializing coordinator: device_id=%s, device_sn=%s",
+            device_id, device_sn
         )
 
-        # Initialize REST API client for mode setting and other operations
-        # REST API uses the numeric device_id
-        self._rest_api = ESYSunhomeAPI(username, password, device_id)
-        self.api.api = self._rest_api  # Link REST API to battery controller
-
-        # Connect to MQTT
+        self.api = EsySunhomeBattery(
+            self.config_entry.data[CONF_USERNAME],
+            self.config_entry.data[CONF_PASSWORD],
+            device_id,
+            device_sn=device_sn,
+        )
         self.api.connect(EsySunhomeMessageListener(self))
-
-        # Update interval management
         self._fast_updates = True
         self._cancel_updates = None
         self._polling_enabled = self.config_entry.options.get(
@@ -95,64 +72,35 @@ class EsySunhomeCoordinator(DataUpdateCoordinator[InverterState]):
 
         self.set_update_interval(fast=True)
 
-        _LOGGER.info(
-            "Coordinator initialized for device %s (sn=%s, user_id=%s)",
-            device_id,
-            device_sn or "not set",
-            user_id or "not set",
-        )
-
     def set_polling_enabled(self, enabled: bool) -> None:
         """Enable or disable API polling."""
         self._polling_enabled = enabled
         _LOGGER.info("API polling %s", "enabled" if enabled else "disabled")
 
     def set_update_interval(self, fast: bool) -> None:
-        """Adjust the update interval.
-
-        For v2.0.0, the inverter pushes data automatically via MQTT,
-        so polling is mainly for backup/fallback purposes.
-        """
-        # Timer is already correct
+        """Adjust the update interval."""
         if self._cancel_updates and self._fast_updates == fast:
             return
 
-        # Cancel existing timer and start a new one
         if self._cancel_updates:
             self._cancel_updates()
 
         self._cancel_updates = async_track_time_interval(
             self.hass,
             self._async_request_update,
-            timedelta(seconds=30),  # Longer interval since MQTT pushes data
+            timedelta(seconds=15),
             cancel_on_shutdown=True,
         )
         self._fast_updates = fast
 
-    async def _async_request_update(self, _) -> None:
-        """Request update - only if polling is enabled.
-
-        For v2.0.0, the inverter pushes data automatically via MQTT,
-        so this is mainly for fallback purposes.
-        """
+    async def _async_request_update(self, _):
+        """Request update - only if polling is enabled."""
         if self._polling_enabled:
-            try:
-                await self.api.request_update()
-            except Exception as e:
-                _LOGGER.debug("Update request failed: %s", e)
+            await self.api.request_update()
         else:
-            _LOGGER.debug("Polling disabled, skipping update request")
+            _LOGGER.debug("Polling disabled, skipping API update request")
 
-    async def shutdown(self) -> None:
-        """Shutdown the coordinator."""
-        if self._cancel_updates:
-            self._cancel_updates()
-            self._cancel_updates = None
-
+    async def shutdown(self):
+        """Shutdown the API."""
         if self.api:
             await self.api.disconnect()
-
-        if self._rest_api:
-            await self._rest_api.close_session()
-
-        _LOGGER.info("Coordinator shutdown complete")
