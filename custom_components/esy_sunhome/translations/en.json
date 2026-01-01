@@ -2,62 +2,61 @@
     "config": {
         "step": {
             "user": {
-                "title": "Configure ESY Sunhome",
-                "description": "Enter your ESY Sunhome credentials",
+                "title": "ESY Sunhome Login",
+                "description": "Enter your ESY Sunhome account credentials.",
                 "data": {
-                    "username": "Username",
+                    "username": "Username/Email",
                     "password": "Password"
                 }
             },
             "device_id": {
-                "title": "Select Inverter",
-                "description": "Select your inverter from the available devices",
+                "title": "Select Device",
+                "description": "Select the inverter to monitor.",
                 "data": {
-                    "device_id": "Inverter"
+                    "device_id": "Device"
+                }
+            },
+            "protocol": {
+                "title": "Protocol Parameters",
+                "description": "These parameters determine the register mappings for your device. They are auto-detected but can be adjusted if needed.",
+                "data": {
+                    "pv_power": "PV Power Rating",
+                    "tp_type": "Device Type",
+                    "mcu_version": "MCU Version"
                 }
             }
         },
         "error": {
-            "auth_failed": "Authentication failed. Please check your username and password.",
-            "no_devices": "No inverters found for this account.",
-            "cannot_connect": "Failed to connect to ESY Sunhome servers."
+            "auth_failed": "Authentication failed. Check your credentials.",
+            "no_devices": "No devices found for this account."
+        },
+        "abort": {
+            "already_configured": "Device is already configured."
         }
     },
     "options": {
         "step": {
             "init": {
                 "title": "ESY Sunhome Options",
-                "description": "Configure options for ESY Sunhome",
                 "data": {
-                    "enable_polling": "Enable API Polling"
-                },
-                "data_description": {
-                    "enable_polling": "When disabled, the integration will not request data updates from the API, but operating mode changes will still work."
+                    "enable_polling": "Enable API polling (fallback when MQTT unavailable)"
                 }
             }
         }
     },
     "entity": {
-        "binary_sensor": {
-            "gridLine": {
-                "name": "Grid Active"
-            },
-            "loadLine": {
-                "name": "Load Active"
-            },
-            "pvLine": {
-                "name": "PV Active"
-            },
-            "batteryLine": {
-                "name": "Battery Active"
-            },
-            "heatingState": {
-                "name": "Inverter Heating State"
-            }
-        },
         "sensor": {
             "batterySoc": {
                 "name": "Battery State of Charge"
+            },
+            "pvPower": {
+                "name": "PV Power"
+            },
+            "pv1Power": {
+                "name": "PV1 Power"
+            },
+            "pv2Power": {
+                "name": "PV2 Power"
             },
             "gridPower": {
                 "name": "Grid Power"
@@ -68,46 +67,135 @@
             "batteryPower": {
                 "name": "Battery Power"
             },
-            "pvPower": {
-                "name": "PV Power"
-            },
             "batteryImport": {
-                "name": "Battery Import"
+                "name": "Battery Charging Power"
             },
             "batteryExport": {
-                "name": "Battery Export"
+                "name": "Battery Discharging Power"
             },
             "gridImport": {
-                "name": "Grid Import"
+                "name": "Grid Import Power"
             },
             "gridExport": {
-                "name": "Grid Export"
-            },
-            "scheduleMode": {
-                "name": "Schedule Mode"
-            },
-            "batteryStatus": {
-                "name": "Battery Status"
-            },
-            "systemRunStatus": {
-                "name": "System Run Status"
+                "name": "Grid Export Power"
             },
             "dailyPowerGeneration": {
-                "name": "Daily Power Generation"
+                "name": "Daily Generation"
             },
-            "ratedPower": {
-                "name": "Rated Power"
+            "dailyConsumption": {
+                "name": "Daily Consumption"
+            },
+            "dailyGridExport": {
+                "name": "Daily Grid Export"
+            },
+            "dailyBattCharge": {
+                "name": "Daily Battery Charge"
+            },
+            "dailyBattDischarge": {
+                "name": "Daily Battery Discharge"
+            },
+            "totalPowerGeneration": {
+                "name": "Total Generation"
+            },
+            "gridVoltage": {
+                "name": "Grid Voltage"
+            },
+            "gridFrequency": {
+                "name": "Grid Frequency"
+            },
+            "pv1Voltage": {
+                "name": "PV1 Voltage"
+            },
+            "pv1Current": {
+                "name": "PV1 Current"
+            },
+            "pv2Voltage": {
+                "name": "PV2 Voltage"
+            },
+            "pv2Current": {
+                "name": "PV2 Current"
+            },
+            "batteryVoltage": {
+                "name": "Battery Voltage"
+            },
+            "batteryCurrent": {
+                "name": "Battery Current"
             },
             "inverterTemp": {
                 "name": "Inverter Temperature"
             },
+            "dcdcTemperature": {
+                "name": "DC-DC Temperature"
+            },
+            "batterySoh": {
+                "name": "Battery Health (SOH)"
+            },
             "batteryStatusText": {
                 "name": "Battery Status"
+            },
+            "ct1Power": {
+                "name": "CT1 Power"
+            },
+            "ct2Power": {
+                "name": "CT2 Power"
+            },
+            "meterPower": {
+                "name": "Meter Power"
+            },
+            "energyFlowPv": {
+                "name": "Energy Flow PV"
+            },
+            "energyFlowBatt": {
+                "name": "Energy Flow Battery"
+            },
+            "energyFlowGrid": {
+                "name": "Energy Flow Grid"
+            },
+            "energyFlowLoad": {
+                "name": "Energy Flow Load"
+            },
+            "ratedPower": {
+                "name": "Rated Power"
+            },
+            "systemRunMode": {
+                "name": "System Mode"
+            },
+            "systemRunStatus": {
+                "name": "System Status"
+            }
+        },
+        "binary_sensor": {
+            "gridLine": {
+                "name": "Grid Connected"
+            },
+            "pvLine": {
+                "name": "PV Producing"
+            },
+            "loadLine": {
+                "name": "Load Active"
+            },
+            "batteryLine": {
+                "name": "Battery Active"
+            },
+            "alarmActive": {
+                "name": "Alarm Active"
+            }
+        },
+        "select": {
+            "code": {
+                "name": "Operating Mode",
+                "state": {
+                    "1": "Regular",
+                    "2": "Emergency",
+                    "3": "Sell First",
+                    "4": "Reserved",
+                    "5": "Battery Management"
+                }
             }
         },
         "switch": {
-            "api_polling": {
-                "name": "API Polling"
+            "heatingState": {
+                "name": "Battery Heating"
             }
         }
     }
