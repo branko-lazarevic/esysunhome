@@ -14,11 +14,17 @@ ESY_SCHEDULES_ENDPOINT = "/api/lsydevicechargedischarge/info?deviceId="
 ESY_API_PROTOCOL_LIST = "/sys/protocol/list"
 ESY_API_PROTOCOL_SEGMENT = "/sys/protocol/segment"
 
-# MQTT Configuration
+# Device Info and Certificate Endpoints
+ESY_API_DEVICE_INFO = "/api/lsydevice/info"
+ESY_API_CERT_ENDPOINT = "/security/cert/android"
+
+# MQTT Configuration (TLS on port 8883)
 ESY_MQTT_BROKER_URL = "abroadtcp.esysunhome.com"
-ESY_MQTT_BROKER_PORT = 1883
-ESY_MQTT_USERNAME = ""
-ESY_MQTT_PASSWORD = ""
+ESY_MQTT_BROKER_PORT = 8883
+
+# Fallback MQTT credentials (if device info not available)
+ESY_MQTT_USERNAME = "admin"
+ESY_MQTT_PASSWORD = "3omKSLaDI7q27OhX"
 
 # Config Keys
 CONF_USERNAME = "username"

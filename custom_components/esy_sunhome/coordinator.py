@@ -2,6 +2,8 @@
 
 import asyncio
 import logging
+import ssl
+import os
 from datetime import timedelta
 from typing import Any, Optional
 
@@ -19,7 +21,7 @@ from .const import (
     CONF_ENABLE_POLLING,
     DEFAULT_ENABLE_POLLING,
 )
-from .esysunhome import ESYSunhomeAPI
+from .esysunhome import ESYSunhomeAPI, MqttCredentials
 from .protocol import DynamicTelemetryParser, create_parser
 from .protocol_api import ProtocolDefinition
 
@@ -80,6 +82,10 @@ class ESYSunhomeCoordinator(DataUpdateCoordinator):
         self._mqtt_task: Optional[asyncio.Task] = None
         self._mqtt_connected = False
         self._shutdown = False
+        self._mqtt_credentials: Optional[MqttCredentials] = None
+        
+        # Certificate directory in HA config folder
+        self._cert_dir = os.path.join(hass.config.config_dir, ".storage", "esy_sunhome_certs")
         
         # Data state
         self._last_data: dict = {}
@@ -171,37 +177,120 @@ class ESYSunhomeCoordinator(DataUpdateCoordinator):
                 pass
         
         await self.api.close_session()
+        
+        # Note: We keep certificates for faster reconnection next time
+        # They will be refreshed if they expire or fail
 
     async def _mqtt_loop(self) -> None:
         """Main MQTT connection loop with reconnection."""
+        connection_failures = 0
+        max_failures_before_refresh = 3
+        
         while not self._shutdown:
+            # Fetch MQTT credentials (including certificates) if needed
+            if not self._mqtt_credentials or connection_failures >= max_failures_before_refresh:
+                try:
+                    _LOGGER.info("Fetching MQTT credentials and certificates...")
+                    self._mqtt_credentials = await self.api.get_mqtt_credentials(self._cert_dir)
+                    _LOGGER.info("MQTT credentials obtained: broker=%s:%d, tls=%s, mtls=%s",
+                                self._mqtt_credentials.broker_url,
+                                self._mqtt_credentials.port,
+                                self._mqtt_credentials.use_tls,
+                                self._mqtt_credentials.client_cert_path is not None)
+                    connection_failures = 0  # Reset counter after refresh
+                    
+                    # Small delay after fetching new credentials - server may need time to activate them
+                    if self._mqtt_credentials.use_tls:
+                        _LOGGER.debug("Waiting 2 seconds for credentials to activate...")
+                        await asyncio.sleep(2)
+                        
+                except Exception as e:
+                    _LOGGER.error("Failed to get MQTT credentials: %s", e)
+                    # Use fallback credentials
+                    self._mqtt_credentials = MqttCredentials(
+                        broker_url=ESY_MQTT_BROKER_URL,
+                        port=1883,  # Fallback to non-TLS port
+                        username=ESY_MQTT_USERNAME,
+                        password=ESY_MQTT_PASSWORD,
+                        use_tls=False
+                    )
+            
             try:
                 await self._connect_mqtt()
+                connection_failures = 0  # Reset on successful connection
             except asyncio.CancelledError:
                 _LOGGER.info("MQTT loop cancelled")
                 break
             except Exception as e:
                 _LOGGER.error("MQTT connection error: %s", e)
                 self._mqtt_connected = False
+                connection_failures += 1
+                
+                # If TLS connection keeps failing, try falling back to non-TLS
+                if connection_failures == 2 and self._mqtt_credentials.use_tls:
+                    _LOGGER.warning("TLS connection failed twice, trying non-TLS fallback")
+                    self._mqtt_credentials = MqttCredentials(
+                        broker_url=ESY_MQTT_BROKER_URL,
+                        port=1883,
+                        username=self._mqtt_credentials.username,
+                        password=self._mqtt_credentials.password,
+                        use_tls=False
+                    )
             
             if not self._shutdown:
-                _LOGGER.info("Reconnecting MQTT in %d seconds", MQTT_RECONNECT_INTERVAL)
-                await asyncio.sleep(MQTT_RECONNECT_INTERVAL)
+                # Shorter retry interval for first few failures
+                retry_interval = 5 if connection_failures == 1 else MQTT_RECONNECT_INTERVAL
+                _LOGGER.info("Reconnecting MQTT in %d seconds (failures=%d)", 
+                            retry_interval, connection_failures)
+                await asyncio.sleep(retry_interval)
 
     async def _connect_mqtt(self) -> None:
         """Connect to MQTT broker and process messages."""
-        _LOGGER.info("Connecting to MQTT broker %s:%d", ESY_MQTT_BROKER_URL, ESY_MQTT_BROKER_PORT)
+        creds = self._mqtt_credentials
+        
+        _LOGGER.info("Connecting to MQTT broker %s:%d (tls=%s, mtls=%s)", 
+                    creds.broker_url, creds.port, creds.use_tls,
+                    creds.client_cert_path is not None)
+        
+        # Build TLS context if needed (in executor to avoid blocking)
+        tls_context = None
+        if creds.use_tls:
+            def create_ssl_context():
+                """Create SSL context - runs in executor to avoid blocking."""
+                ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+                
+                # Load CA certificate if available
+                if creds.ca_cert_path and os.path.exists(creds.ca_cert_path):
+                    ctx.load_verify_locations(creds.ca_cert_path)
+                    _LOGGER.debug("Loaded CA cert from %s", creds.ca_cert_path)
+                
+                # Load client certificate and key for mTLS
+                if (creds.client_cert_path and creds.client_key_path and 
+                    os.path.exists(creds.client_cert_path) and os.path.exists(creds.client_key_path)):
+                    ctx.load_cert_chain(
+                        certfile=creds.client_cert_path,
+                        keyfile=creds.client_key_path
+                    )
+                    _LOGGER.debug("Loaded client cert from %s", creds.client_cert_path)
+                
+                # Don't verify hostname for this broker (common with IoT devices)
+                ctx.check_hostname = False
+                ctx.verify_mode = ssl.CERT_NONE  # ESY's cert may not be fully valid
+                return ctx
+            
+            tls_context = await asyncio.get_event_loop().run_in_executor(None, create_ssl_context)
         
         async with aiomqtt.Client(
-            hostname=ESY_MQTT_BROKER_URL,
-            port=ESY_MQTT_BROKER_PORT,
-            username=ESY_MQTT_USERNAME,
-            password=ESY_MQTT_PASSWORD,
+            hostname=creds.broker_url,
+            port=creds.port,
+            username=creds.username,
+            password=creds.password,
+            tls_context=tls_context,
             keepalive=60,
         ) as client:
             self._mqtt_client = client
             self._mqtt_connected = True
-            _LOGGER.info("Connected to MQTT broker")
+            _LOGGER.info("Connected to MQTT broker successfully")
             
             # Subscribe to topics
             await client.subscribe(self._topic_up)

@@ -1,8 +1,12 @@
 import asyncio
 import logging
 import aiohttp
+import ssl
+import tempfile
+import os
 from functools import wraps
-from typing import Optional, Callable, Any
+from typing import Optional, Callable, Any, Dict
+from dataclasses import dataclass
 from .const import (
     ESY_API_BASE_URL,
     ESY_API_LOGIN_ENDPOINT,
@@ -10,11 +14,26 @@ from .const import (
     ESY_API_OBTAIN_ENDPOINT,
     ESY_API_MODE_ENDPOINT,
     ESY_SCHEDULES_ENDPOINT,
+    ESY_API_DEVICE_INFO,
+    ESY_API_CERT_ENDPOINT,
     ATTR_SCHEDULE_MODE
 )
 from datetime import datetime, timedelta
 
 _LOGGER = logging.getLogger(__name__)
+
+
+@dataclass
+class MqttCredentials:
+    """Container for MQTT connection credentials and certificates."""
+    broker_url: str
+    port: int
+    username: str
+    password: str
+    ca_cert_path: Optional[str] = None
+    client_cert_path: Optional[str] = None
+    client_key_path: Optional[str] = None
+    use_tls: bool = True
 
 
 class AuthenticationError(Exception):
@@ -345,8 +364,172 @@ class ESYSunhomeAPI:
             _LOGGER.error(f"Error fetching schedule: {e}")
             # Don't raise - this is not critical functionality
 
+    @retry_with_backoff(max_retries=2, initial_delay=1.0)
+    async def get_device_info(self) -> Dict[str, Any]:
+        """Fetch detailed device info including MQTT credentials.
+        
+        Returns:
+            Device info dict with mqttUserName, mqttPassword, sn, etc.
+        """
+        await self.ensure_device_id()
+        
+        url = f"{ESY_API_BASE_URL}{ESY_API_DEVICE_INFO}?id={self.device_id}"
+        
+        status, data = await self._make_request_with_auth("GET", url)
+        
+        if status == 200 and isinstance(data, dict) and data.get("code") == 0:
+            device_info = data.get("data", {})
+            _LOGGER.info(f"Retrieved device info for {device_info.get('sn', 'unknown')}")
+            return device_info
+        else:
+            raise Exception(f"Failed to fetch device info. Status: {status}, Response: {data}")
 
-# Test script to run locally
+    @retry_with_backoff(max_retries=2, initial_delay=1.0)
+    async def get_mqtt_certs(self) -> Dict[str, Any]:
+        """Fetch MQTT certificate URLs from the API.
+        
+        Returns:
+            Dict with mqttDomain, port, ca, clientCrt, clientKey URLs
+        """
+        url = f"{ESY_API_BASE_URL}{ESY_API_CERT_ENDPOINT}"
+        
+        status, data = await self._make_request_with_auth("GET", url)
+        
+        if status == 200 and isinstance(data, dict) and data.get("code") == 0:
+            cert_info = data.get("data", {})
+            _LOGGER.info(f"Retrieved MQTT cert info: domain={cert_info.get('mqttDomain')}, port={cert_info.get('port')}")
+            return cert_info
+        else:
+            raise Exception(f"Failed to fetch MQTT certs. Status: {status}, Response: {data}")
+
+    async def download_file(self, url: str, dest_path: str) -> bool:
+        """Download a file from URL to local path.
+        
+        Args:
+            url: URL to download from (e.g., S3 presigned URL)
+            dest_path: Local file path to save to
+            
+        Returns:
+            True if successful
+        """
+        import asyncio
+        
+        try:
+            session = await self._get_session()
+            async with session.get(url) as response:
+                if response.status == 200:
+                    content = await response.read()
+                    
+                    # Write file in executor to avoid blocking
+                    def write_file():
+                        with open(dest_path, 'wb') as f:
+                            f.write(content)
+                    
+                    await asyncio.get_event_loop().run_in_executor(None, write_file)
+                    _LOGGER.debug(f"Downloaded {len(content)} bytes to {dest_path}")
+                    return True
+                else:
+                    _LOGGER.error(f"Failed to download {url}: {response.status}")
+                    return False
+        except Exception as e:
+            _LOGGER.error(f"Error downloading {url}: {e}")
+            return False
+
+    async def get_mqtt_credentials(self, cert_dir: str) -> MqttCredentials:
+        """Get complete MQTT credentials including downloaded certificates.
+        
+        This method:
+        1. Fetches device info for username/password
+        2. Fetches certificate URLs
+        3. Downloads certificates to cert_dir
+        4. Returns MqttCredentials with all info needed to connect
+        
+        Args:
+            cert_dir: Directory to store downloaded certificates
+            
+        Returns:
+            MqttCredentials object with all connection info
+        """
+        from .const import ESY_MQTT_BROKER_URL, ESY_MQTT_BROKER_PORT, ESY_MQTT_USERNAME, ESY_MQTT_PASSWORD
+        
+        # Create cert directory if needed
+        os.makedirs(cert_dir, exist_ok=True)
+        
+        # Get device info for MQTT username/password
+        try:
+            device_info = await self.get_device_info()
+            mqtt_username = device_info.get("mqttUserName", ESY_MQTT_USERNAME)
+            mqtt_password = device_info.get("mqttPassword", ESY_MQTT_PASSWORD)
+            _LOGGER.info(f"Using MQTT credentials from device info: username={mqtt_username}")
+        except Exception as e:
+            _LOGGER.warning(f"Failed to get device info, using fallback credentials: {e}")
+            mqtt_username = ESY_MQTT_USERNAME
+            mqtt_password = ESY_MQTT_PASSWORD
+        
+        # Get certificate URLs
+        try:
+            cert_info = await self.get_mqtt_certs()
+            broker_url = cert_info.get("mqttDomain", ESY_MQTT_BROKER_URL)
+            broker_port = cert_info.get("port", ESY_MQTT_BROKER_PORT)
+            
+            # Certificate file paths
+            ca_path = os.path.join(cert_dir, "root.crt")
+            client_cert_path = os.path.join(cert_dir, "client.crt")
+            client_key_path = os.path.join(cert_dir, "client.key")
+            
+            # Download certificates
+            ca_url = cert_info.get("ca")
+            client_crt_url = cert_info.get("clientCrt")
+            client_key_url = cert_info.get("clientKey")
+            
+            certs_downloaded = True
+            
+            if ca_url:
+                if not await self.download_file(ca_url, ca_path):
+                    certs_downloaded = False
+                    _LOGGER.warning("Failed to download CA certificate")
+            
+            if client_crt_url:
+                if not await self.download_file(client_crt_url, client_cert_path):
+                    certs_downloaded = False
+                    _LOGGER.warning("Failed to download client certificate")
+            
+            if client_key_url:
+                if not await self.download_file(client_key_url, client_key_path):
+                    certs_downloaded = False
+                    _LOGGER.warning("Failed to download client key")
+            
+            if certs_downloaded and os.path.exists(ca_path) and os.path.exists(client_cert_path) and os.path.exists(client_key_path):
+                _LOGGER.info("All certificates downloaded successfully, using mTLS")
+                return MqttCredentials(
+                    broker_url=broker_url,
+                    port=broker_port,
+                    username=mqtt_username,
+                    password=mqtt_password,
+                    ca_cert_path=ca_path,
+                    client_cert_path=client_cert_path,
+                    client_key_path=client_key_path,
+                    use_tls=True
+                )
+            else:
+                _LOGGER.warning("Certificate download incomplete, falling back to basic TLS")
+                return MqttCredentials(
+                    broker_url=broker_url,
+                    port=broker_port,
+                    username=mqtt_username,
+                    password=mqtt_password,
+                    use_tls=True
+                )
+                
+        except Exception as e:
+            _LOGGER.warning(f"Failed to get certificates, using fallback connection: {e}")
+            return MqttCredentials(
+                broker_url=ESY_MQTT_BROKER_URL,
+                port=ESY_MQTT_BROKER_PORT,
+                username=mqtt_username,
+                password=mqtt_password,
+                use_tls=False  # Fall back to non-TLS
+            )
 # if __name__ == "__main__":
 #     username = "testuser@test.com"
 #     password = "password"
