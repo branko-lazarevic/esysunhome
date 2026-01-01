@@ -17,8 +17,8 @@ ESY_API_PROTOCOL_SEGMENT = "/sys/protocol/segment"
 # MQTT Configuration
 ESY_MQTT_BROKER_URL = "abroadtcp.esysunhome.com"
 ESY_MQTT_BROKER_PORT = 1883
-ESY_MQTT_USERNAME = "admin"
-ESY_MQTT_PASSWORD = "3omKSLaDI7q27OhX"
+ESY_MQTT_USERNAME = ""
+ESY_MQTT_PASSWORD = ""
 
 # Config Keys
 CONF_USERNAME = "username"

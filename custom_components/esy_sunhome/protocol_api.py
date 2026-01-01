@@ -310,7 +310,10 @@ class ProtocolAPI:
         # Add essential registers based on known good mappings
         fallback_input_regs = [
             (5, "systemRunMode", DATA_TYPE_UNSIGNED, 1, ""),
-            (6, "systemRunStatus", DATA_TYPE_UNSIGNED, 1, ""),
+            # Register 6: Previously thought to be systemRunStatus, but MQTT data shows
+            # it contains the pattern/schedule mode (e.g., 5=BEM) while register 5 shows
+            # the current running mode. Capture as both names for compatibility.
+            (6, "patternMode", DATA_TYPE_UNSIGNED, 1, ""),  # Schedule mode setting
             (7, "dcdcTemperature", DATA_TYPE_SIGNED, 0.1, "℃"),
             (10, "dailyEnergyGeneration", DATA_TYPE_UNSIGNED, 0.001, "kWh"),
             (12, "totalEnergyGeneration", DATA_TYPE_UNSIGNED, 0.001, "kWh"),

@@ -296,50 +296,22 @@ class DynamicTelemetryParser:
         result["gridLine"] = 1 if result["gridPower"] != 0 else 0
         
         # === BATTERY POWER ===
-        # The battery power value may be:
-        # 1. Signed: positive=charging, negative=discharging
-        # 2. Unsigned/absolute: direction from batteryLine or batteryStatus
-        #
-        # batteryLine: 1=discharging, 2=charging
-        # batteryStatus: 1=charging, 2=discharging
+        # Standard convention: Positive = Charging, Negative = Discharging
         
         raw_batt_power = (
             values.get("batteryPower") or
             values.get("energyFlowBatt", 0) or 0
         )
         
-        # Get direction indicators
-        batt_line = values.get("batteryLine") or values.get("battLine") or 0
-        batt_status = values.get("batteryStatus") or values.get("battChgStatus") or 0
+        batt_power = raw_batt_power
         
-        # Determine if we need to apply direction from status fields
-        # If raw value is already signed (negative), trust it
-        if raw_batt_power < 0:
-            # Already signed negative = discharging
-            batt_power = raw_batt_power
+        if batt_power > 0:
+            is_charging = True
+            is_discharging = False
+        elif batt_power < 0:
             is_charging = False
             is_discharging = True
-        elif raw_batt_power > 0:
-            # Positive value - check if we need to flip sign based on status
-            # batteryLine: 1=discharging, 2=charging
-            # batteryStatus: 1=charging, 2=discharging
-            if batt_line == 1 or batt_status == 2:
-                # Discharging - make negative
-                batt_power = -abs(raw_batt_power)
-                is_charging = False
-                is_discharging = True
-            elif batt_line == 2 or batt_status == 1:
-                # Charging - keep positive
-                batt_power = abs(raw_batt_power)
-                is_charging = True
-                is_discharging = False
-            else:
-                # No direction info - assume positive = charging (convention)
-                batt_power = raw_batt_power
-                is_charging = True
-                is_discharging = False
         else:
-            batt_power = 0
             is_charging = False
             is_discharging = False
         
@@ -347,13 +319,13 @@ class DynamicTelemetryParser:
         
         # Directional battery power for HA sensors
         if is_charging:
-            result["batteryImport"] = abs(batt_power)  # Charging
+            result["batteryImport"] = batt_power  # Charging = import
             result["batteryExport"] = 0
             result["batteryStatusText"] = "Charging"
             result["batteryLine"] = 2
         elif is_discharging:
             result["batteryImport"] = 0
-            result["batteryExport"] = abs(batt_power)  # Discharging
+            result["batteryExport"] = abs(batt_power)  # Discharging = export
             result["batteryStatusText"] = "Discharging"
             result["batteryLine"] = 1
         else:
@@ -362,8 +334,7 @@ class DynamicTelemetryParser:
             result["batteryStatusText"] = "Idle"
             result["batteryLine"] = 0
         
-        _LOGGER.debug("Battery: raw=%d, line=%d, status=%d -> power=%d (%s)",
-                     raw_batt_power, batt_line, batt_status, batt_power, result["batteryStatusText"])
+        _LOGGER.debug("Battery: power=%d (%s)", batt_power, result["batteryStatusText"])
         
         # === LOAD POWER ===
         load_power = (
@@ -423,9 +394,23 @@ class DynamicTelemetryParser:
             5: "Battery Energy Management",
         }
         
-        # Get mode values - check for pattern mode from holding registers
+        # Get mode values - check for pattern mode from multiple sources
+        # Register 5 = systemRunMode (current running mode)
+        # Register 6 = called "systemRunStatus" by API, but actually contains pattern/schedule mode!
         running_mode = values.get("systemRunMode") or 1  # From input register 5
-        pattern_mode = values.get("patternMode") or values.get("workMode") or 0  # From holding register 57
+        
+        # Pattern mode could be in different fields depending on protocol source
+        pattern_mode = (
+            values.get("patternMode") or      # Our fallback name
+            values.get("systemRunStatus") or  # API name for register 6 (misleading name!)
+            values.get("workMode") or 
+            0
+        )
+        
+        # Validate pattern_mode is actually a mode code (1, 2, 3, or 5)
+        # If it's something else (like a status code 0, 4, etc.), ignore it
+        if pattern_mode not in (1, 2, 3, 5):
+            pattern_mode = 0
         
         # For the select entity, use pattern mode if available, else running mode
         display_mode = pattern_mode if pattern_mode > 0 else running_mode
@@ -475,29 +460,137 @@ class ESYCommandBuilder:
 
     @staticmethod
     def build_write_command(
-        config_id: int,
         register_address: int,
         value: int,
-        page_index: int = 3,
-        source_id: int = 1
+        user_id: bytes = None,
+        msg_id: int = 0,
     ) -> bytes:
-        """Build a write command for a single register."""
-        payload = bytearray(4)
-        payload[0] = (register_address >> 8) & 0xFF
-        payload[1] = register_address & 0xFF
-        payload[2] = (value >> 8) & 0xFF
-        payload[3] = value & 0xFF
-
+        """Build a write command for a single register.
+        
+        Based on MQTT traffic analysis, write commands use:
+        - fun_code = 0x00
+        - source_id = 0x10
+        - page_index = 0x0800
+        
+        Payload format:
+        - num_operations (2 bytes)
+        - address (2 bytes)
+        - count (2 bytes)
+        - value (2 bytes per count)
+        
+        Args:
+            register_address: Register address to write (e.g., 57 for mode)
+            value: Value to write
+            user_id: 8-byte user ID (default: all 0xFF)
+            msg_id: Message ID
+            
+        Returns:
+            Binary command to publish to DOWN topic
+        """
+        if user_id is None:
+            user_id = bytes([0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFC, 0x17])
+        
+        # Payload: num_ops(2) + addr(2) + count(2) + value(2)
+        payload = struct.pack(">HHHH", 
+            1,                  # 1 operation
+            register_address,   # address
+            1,                  # 1 value
+            value               # the value
+        )
+        
         header = MsgHeader(
-            config_id=config_id,
-            msg_id=0,
-            user_id=bytes(8),
-            fun_code=FunctionCode.WRITE_SINGLE,
-            source_id=source_id,
-            page_index=page_index,
+            config_id=0,
+            msg_id=msg_id,
+            user_id=user_id,
+            fun_code=0x00,      # Write command
+            source_id=0x10,     # From app
+            page_index=0x0800,  # Write page
             data_length=len(payload)
         )
 
+        return header.to_bytes() + payload
+
+    @staticmethod
+    def build_multi_write_command(
+        writes: List[tuple],  # List of (address, values) tuples
+        user_id: bytes = None,
+        msg_id: int = 0,
+    ) -> bytes:
+        """Build a write command for multiple registers.
+        
+        Args:
+            writes: List of (address, [values]) tuples
+            user_id: 8-byte user ID (default: all 0xFF)
+            msg_id: Message ID
+            
+        Returns:
+            Binary command to publish to DOWN topic
+        """
+        if user_id is None:
+            user_id = bytes([0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFC, 0x17])
+        
+        # Build payload
+        payload = struct.pack(">H", len(writes))  # num_operations
+        
+        for addr, values in writes:
+            if isinstance(values, int):
+                values = [values]
+            payload += struct.pack(">HH", addr, len(values))  # addr, count
+            for val in values:
+                payload += struct.pack(">H", val)  # each value
+        
+        header = MsgHeader(
+            config_id=0,
+            msg_id=msg_id,
+            user_id=user_id,
+            fun_code=0x00,
+            source_id=0x10,
+            page_index=0x0800,
+            data_length=len(payload)
+        )
+
+        return header.to_bytes() + payload
+
+    @staticmethod
+    def build_poll_request(
+        segment_ids: List[int],
+        msg_id: int = 0,
+        user_id: bytes = None
+    ) -> bytes:
+        """Build a poll request to request specific segments from inverter.
+        
+        This is the DOWN command the app sends to request data updates.
+        The inverter responds on the UP topic with only the requested segments.
+        
+        Args:
+            segment_ids: List of segment IDs to request (e.g., [0, 1, 3, 6])
+            msg_id: Message ID (incrementing counter)
+            user_id: 8-byte user ID (default: all 0xFF)
+            
+        Returns:
+            Binary command to publish to DOWN topic
+        """
+        if user_id is None:
+            user_id = bytes([0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFC, 0x17])
+        
+        # Payload: segment count (2 bytes) + segment IDs (2 bytes each)
+        payload = bytearray()
+        payload.extend(struct.pack(">H", len(segment_ids)))  # Count
+        for seg_id in segment_ids:
+            payload.extend(struct.pack(">H", seg_id))
+        
+        # Header for poll request
+        # fun_code = 0x20 (response/poll), source_id = 0x10, page_index = 0x0300
+        header = MsgHeader(
+            config_id=0,
+            msg_id=msg_id,
+            user_id=user_id,
+            fun_code=0x20,
+            source_id=0x10,
+            page_index=0x0300,
+            data_length=len(payload)
+        )
+        
         return header.to_bytes() + bytes(payload)
 
 

@@ -26,7 +26,7 @@ from .protocol_api import ProtocolDefinition
 _LOGGER = logging.getLogger(__name__)
 
 MQTT_RECONNECT_INTERVAL = 30
-POLL_INTERVAL = timedelta(seconds=60)
+POLL_INTERVAL = timedelta(seconds=15)
 
 
 class TelemetryData:
@@ -83,29 +83,72 @@ class ESYSunhomeCoordinator(DataUpdateCoordinator):
         
         # Data state
         self._last_data: dict = {}
+        self._poll_msg_id: int = 0  # Incrementing message ID for poll requests
         
         # MQTT topics
         self._topic_up = f"/ESY/PVVC/{device_sn}/UP"
+        self._topic_down = f"/ESY/PVVC/{device_sn}/DOWN"
+        self._topic_event = f"/ESY/PVVC/{device_sn}/EVENT"
         self._topic_alarm = f"/ESY/PVVC/{device_sn}/ALARM"
         
+        # Default segments to poll (same as app: 0, 1, 3, 6)
+        # Segment 0: Core data (addr 0-124) - power, SOC, mode
+        # Segment 1: Extended data
+        # Segment 3: BMS/Battery data
+        # Segment 6: Inverter/CT data
+        self._poll_segments = [0, 1, 3, 6]
+        
         _LOGGER.info("Coordinator initialized for device %s", device_sn)
-        _LOGGER.info("MQTT topics: UP=%s, ALARM=%s", self._topic_up, self._topic_alarm)
+        _LOGGER.info("MQTT topics: UP=%s, EVENT=%s, DOWN=%s", 
+                    self._topic_up, self._topic_event, self._topic_down)
 
     async def _async_update_data(self) -> TelemetryData:
-        """Fetch data from API (polling fallback)."""
+        """Fetch data via MQTT poll request or API fallback."""
         enable_polling = self.config_entry.options.get(
             CONF_ENABLE_POLLING, DEFAULT_ENABLE_POLLING
         )
         
-        if enable_polling and not self._mqtt_connected:
-            try:
-                await self.api.request_update()
-                _LOGGER.debug("Requested data update from API")
-            except Exception as e:
-                _LOGGER.warning("Failed to request update: %s", e)
+        if enable_polling:
+            if self._mqtt_connected:
+                # Send MQTT poll request (like the app does)
+                await self._send_poll_request()
+            else:
+                # Fallback to API if MQTT not connected
+                try:
+                    await self.api.request_update()
+                    _LOGGER.debug("Requested data update from API (MQTT not connected)")
+                except Exception as e:
+                    _LOGGER.warning("Failed to request update from API: %s", e)
         
         # Return cached data
         return TelemetryData(self._last_data)
+    
+    async def _send_poll_request(self) -> bool:
+        """Send MQTT poll request for segments (like the app does).
+        
+        This sends a DOWN message requesting specific segments,
+        and the inverter responds on UP with the requested data.
+        """
+        from .protocol import ESYCommandBuilder
+        
+        if not self._mqtt_client or not self._mqtt_connected:
+            return False
+        
+        self._poll_msg_id += 1
+        
+        command = ESYCommandBuilder.build_poll_request(
+            segment_ids=self._poll_segments,
+            msg_id=self._poll_msg_id,
+        )
+        
+        try:
+            await self._mqtt_client.publish(self._topic_down, command)
+            _LOGGER.debug("Sent poll request for segments %s (msg_id=%d)", 
+                         self._poll_segments, self._poll_msg_id)
+            return True
+        except Exception as e:
+            _LOGGER.error("Failed to send poll request: %s", e)
+            return False
 
     async def async_config_entry_first_refresh(self) -> None:
         """Perform first refresh and start MQTT."""
@@ -162,8 +205,12 @@ class ESYSunhomeCoordinator(DataUpdateCoordinator):
             
             # Subscribe to topics
             await client.subscribe(self._topic_up)
+            await client.subscribe(self._topic_event)
             await client.subscribe(self._topic_alarm)
-            _LOGGER.info("Subscribed to topics")
+            _LOGGER.info("Subscribed to UP, EVENT, and ALARM topics")
+            
+            # Send initial poll request to get data immediately
+            await self._send_poll_request()
             
             # Process messages
             async for message in client.messages:
@@ -183,6 +230,10 @@ class ESYSunhomeCoordinator(DataUpdateCoordinator):
         _LOGGER.debug("Received message on %s (%d bytes)", topic, len(payload))
         
         if topic == self._topic_up:
+            await self._process_telemetry(payload)
+        elif topic == self._topic_event:
+            # EVENT contains full data dump - process same as UP
+            _LOGGER.info("Received EVENT message (%d bytes) - full data dump", len(payload))
             await self._process_telemetry(payload)
         elif topic == self._topic_alarm:
             await self._process_alarm(payload)
@@ -239,6 +290,8 @@ class ESYSunhomeCoordinator(DataUpdateCoordinator):
     async def set_mode_mqtt(self, mode_code: int) -> bool:
         """Set operating mode via MQTT command.
         
+        Based on MQTT traffic analysis, mode is set by writing to register 57.
+        
         Args:
             mode_code: Mode code (1=Regular, 2=Emergency, 3=Sell, 5=BatteryMgmt)
             
@@ -247,19 +300,65 @@ class ESYSunhomeCoordinator(DataUpdateCoordinator):
         """
         from .protocol import ESYCommandBuilder
         
-        # systemRunMode is holding register 57 (from official protocol)
-        SYSTEM_RUN_MODE_REGISTER = 57
-        config_id = self.protocol.config_id if self.protocol else 6
+        # Register 57 = systemRunMode / patternMode
+        MODE_REGISTER = 57
+        
+        self._poll_msg_id += 1
         
         command = ESYCommandBuilder.build_write_command(
-            config_id=config_id,
-            register_address=SYSTEM_RUN_MODE_REGISTER,
+            register_address=MODE_REGISTER,
             value=mode_code,
-            page_index=3,
-            source_id=2  # App source
+            msg_id=self._poll_msg_id,
         )
         
-        _LOGGER.info("Sending mode change command via MQTT: mode=%d", mode_code)
+        _LOGGER.info("Sending mode change command via MQTT: register=%d, value=%d (mode=%s)",
+                    MODE_REGISTER, mode_code,
+                    {1: "Regular", 2: "Emergency", 3: "Sell", 5: "BEM"}.get(mode_code, "Unknown"))
+        
+        return await self.publish_command(command)
+    
+    async def write_register(self, register_address: int, value: int) -> bool:
+        """Write a value to a register via MQTT.
+        
+        Args:
+            register_address: Register address to write
+            value: Value to write (16-bit unsigned)
+            
+        Returns:
+            True if command sent successfully
+        """
+        from .protocol import ESYCommandBuilder
+        
+        self._poll_msg_id += 1
+        
+        command = ESYCommandBuilder.build_write_command(
+            register_address=register_address,
+            value=value,
+            msg_id=self._poll_msg_id,
+        )
+        
+        _LOGGER.info("Writing register via MQTT: addr=%d, value=%d", register_address, value)
+        return await self.publish_command(command)
+    
+    async def write_registers(self, writes: list) -> bool:
+        """Write multiple registers via MQTT.
+        
+        Args:
+            writes: List of (address, value) or (address, [values]) tuples
+            
+        Returns:
+            True if command sent successfully
+        """
+        from .protocol import ESYCommandBuilder
+        
+        self._poll_msg_id += 1
+        
+        command = ESYCommandBuilder.build_multi_write_command(
+            writes=writes,
+            msg_id=self._poll_msg_id,
+        )
+        
+        _LOGGER.info("Writing %d register(s) via MQTT", len(writes))
         return await self.publish_command(command)
         
     def update_protocol(self, protocol: ProtocolDefinition) -> None:
@@ -267,3 +366,16 @@ class ESYSunhomeCoordinator(DataUpdateCoordinator):
         self.protocol = protocol
         self.parser.set_protocol(protocol)
         _LOGGER.info("Protocol definition updated")
+    
+    def set_polling_enabled(self, enabled: bool) -> None:
+        """Set polling enabled state.
+        
+        This is called by the polling switch. The actual state is stored
+        in config_entry.options, this method just logs the change and
+        optionally triggers an immediate poll.
+        """
+        _LOGGER.info("Polling %s", "enabled" if enabled else "disabled")
+        
+        # If enabling polling and MQTT is connected, send an immediate poll
+        if enabled and self._mqtt_connected:
+            asyncio.create_task(self._send_poll_request())
