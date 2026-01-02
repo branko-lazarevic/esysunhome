@@ -10,5 +10,5 @@
     "aiomqtt>=2.0.1",
     "aiohttp>=3.8.3"
   ],
-  "version": "2.1.2"
+  "version": "2.1.3"
 }

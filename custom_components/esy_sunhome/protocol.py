@@ -358,12 +358,15 @@ class DynamicTelemetryParser:
         
         batt_power = raw_batt_power
         
+        # Battery sign convention from inverter:
+        # Positive = discharging (power flowing FROM battery)
+        # Negative = charging (power flowing TO battery)
         if batt_power > 0:
-            is_charging = True
-            is_discharging = False
-        elif batt_power < 0:
             is_charging = False
             is_discharging = True
+        elif batt_power < 0:
+            is_charging = True
+            is_discharging = False
         else:
             is_charging = False
             is_discharging = False
@@ -372,13 +375,13 @@ class DynamicTelemetryParser:
         
         # Directional battery power for HA sensors
         if is_charging:
-            result["batteryImport"] = batt_power  # Charging = import
+            result["batteryImport"] = abs(batt_power)  # Charging = import (into battery)
             result["batteryExport"] = 0
             result["batteryStatusText"] = "Charging"
             result["batteryLine"] = 2
         elif is_discharging:
             result["batteryImport"] = 0
-            result["batteryExport"] = abs(batt_power)  # Discharging = export
+            result["batteryExport"] = batt_power  # Discharging = export (from battery)
             result["batteryStatusText"] = "Discharging"
             result["batteryLine"] = 1
         else:
