@@ -276,24 +276,43 @@ class DynamicTelemetryParser:
         result["pvLine"] = 1 if result["pvPower"] > 10 else 0
         
         # === GRID POWER ===
-        # Priority: ct1Power > gridActivePower > energyFlowGrid
-        grid_power = (
-            values.get("ct1Power") or
-            values.get("gridActivePower") or
-            values.get("gridPower") or
-            (values.get("energyFlowGrid", 0) or 0)
-        )
-        result["gridPower"] = grid_power or 0
+        # ct1Power has the correct sign and magnitude
+        # Negative = importing FROM grid, Positive = exporting TO grid
         
-        # Directional grid power
-        if result["gridPower"] >= 0:
-            result["gridImport"] = result["gridPower"]
+        ct1_power = values.get("ct1Power") or 0
+        grid_active_power = values.get("gridActivePower") or 0
+        energy_flow_grid = values.get("energyFlowGridPower", 0) or values.get("energyFlowGrid", 0) or 0
+        
+        # Use ct1Power if available (most accurate), otherwise fall back
+        if ct1_power:
+            grid_power = ct1_power
+        elif grid_active_power:
+            grid_power = grid_active_power
+        else:
+            grid_power = energy_flow_grid
+        
+        # Negative = importing, Positive = exporting
+        # For Home Assistant: gridPower positive = import, negative = export
+        # So we need to FLIP the sign from ESY convention
+        result["gridPower"] = -grid_power  # Flip sign for HA convention
+        
+        if grid_power < 0:
+            # ESY negative = importing from grid
+            result["gridImport"] = abs(grid_power)
             result["gridExport"] = 0
+        elif grid_power > 0:
+            # ESY positive = exporting to grid
+            result["gridImport"] = 0
+            result["gridExport"] = grid_power
         else:
             result["gridImport"] = 0
-            result["gridExport"] = abs(result["gridPower"])
+            result["gridExport"] = 0
         
-        result["gridLine"] = 1 if result["gridPower"] != 0 else 0
+        result["gridLine"] = 1 if grid_power != 0 else 0
+        
+        _LOGGER.debug("Grid: ct1=%d, active=%d, flow=%d -> power=%d (import=%d, export=%d)",
+                     ct1_power, grid_active_power, int(energy_flow_grid),
+                     grid_power, result["gridImport"], result["gridExport"])
         
         # === BATTERY POWER ===
         # Standard convention: Positive = Charging, Negative = Discharging
