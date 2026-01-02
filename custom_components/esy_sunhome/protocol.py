@@ -268,28 +268,62 @@ class DynamicTelemetryParser:
         result = dict(values)
         
         # === PV POWER ===
+        # For DC-coupled: pv1Power + pv2Power
+        # For AC-coupled: energyFlowPvTotalPower (pv1/pv2 will be 0)
         pv1 = values.get("pv1Power", 0) or 0
         pv2 = values.get("pv2Power", 0) or 0
-        result["pvPower"] = pv1 + pv2
+        dc_pv_power = pv1 + pv2
+        
+        # energyFlowPvTotalPower is the app's display value - use it for AC-coupled
+        energy_flow_pv = values.get("energyFlowPvTotalPower", 0) or 0
+        
+        # Use DC-coupled value if available, otherwise use energy flow (AC-coupled)
+        if dc_pv_power > 0:
+            result["pvPower"] = dc_pv_power
+        else:
+            result["pvPower"] = int(energy_flow_pv)
+        
         result["pv1Power"] = pv1
         result["pv2Power"] = pv2
         result["pvLine"] = 1 if result["pvPower"] > 10 else 0
         
+        _LOGGER.debug("PV: pv1=%d, pv2=%d, energyFlow=%d -> pvPower=%d",
+                     pv1, pv2, int(energy_flow_pv), result["pvPower"])
+        
         # === GRID POWER ===
-        # ct1Power has the correct sign and magnitude
-        # Negative = importing FROM grid, Positive = exporting TO grid
+        # Different inverter setups use different sensors for grid power:
+        # - Some use ct1Power (with sign)
+        # - Some use ct2Power 
+        # - gridActivePower is often accurate but sometimes has scaling issues
+        # - energyFlowGridPower matches the app display
+        # Negative values = importing FROM grid
         
         ct1_power = values.get("ct1Power") or 0
+        ct2_power = values.get("ct2Power") or 0
         grid_active_power = values.get("gridActivePower") or 0
         energy_flow_grid = values.get("energyFlowGridPower", 0) or values.get("energyFlowGrid", 0) or 0
         
-        # Use ct1Power if available (most accurate), otherwise fall back
-        if ct1_power:
+        # Choose the best source based on which has meaningful data
+        # Prefer ct1Power if it has significant magnitude, otherwise fall back
+        if abs(ct1_power) > 10:
             grid_power = ct1_power
-        elif grid_active_power:
+            grid_source = "ct1"
+        elif abs(grid_active_power) > 10:
             grid_power = grid_active_power
+            grid_source = "active"
+        elif abs(energy_flow_grid) > 10:
+            grid_power = int(energy_flow_grid)
+            grid_source = "flow"
+        elif abs(ct2_power) > 10:
+            # ct2Power may not have sign - use gridActivePower sign if available
+            if grid_active_power < 0:
+                grid_power = -abs(ct2_power)
+            else:
+                grid_power = ct2_power
+            grid_source = "ct2"
         else:
-            grid_power = energy_flow_grid
+            grid_power = ct1_power or grid_active_power or int(energy_flow_grid)
+            grid_source = "fallback"
         
         # Negative = importing, Positive = exporting
         # For Home Assistant: gridPower positive = import, negative = export
@@ -310,9 +344,9 @@ class DynamicTelemetryParser:
         
         result["gridLine"] = 1 if grid_power != 0 else 0
         
-        _LOGGER.debug("Grid: ct1=%d, active=%d, flow=%d -> power=%d (import=%d, export=%d)",
-                     ct1_power, grid_active_power, int(energy_flow_grid),
-                     grid_power, result["gridImport"], result["gridExport"])
+        _LOGGER.debug("Grid: ct1=%d, ct2=%d, active=%d, flow=%d -> power=%d [%s] (import=%d, export=%d)",
+                     ct1_power, ct2_power, grid_active_power, int(energy_flow_grid),
+                     grid_power, grid_source, result["gridImport"], result["gridExport"])
         
         # === BATTERY POWER ===
         # Standard convention: Positive = Charging, Negative = Discharging
