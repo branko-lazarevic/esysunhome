@@ -380,29 +380,51 @@ class ESYSunhomeCoordinator(DataUpdateCoordinator):
         """Set operating mode via MQTT command.
         
         Based on MQTT traffic analysis, mode is set by writing to register 57.
+        The app uses a Unix timestamp as the msg_id for write commands.
+        
+        IMPORTANT: The mode_code here is the MQTT register value to write,
+        NOT the display code! The mapping is:
+        - Regular Mode -> write 1
+        - Emergency Mode -> write 4
+        - Electricity Sell Mode -> write 3
+        - Battery Energy Management -> write 5
         
         Args:
-            mode_code: Mode code (1=Regular, 2=Emergency, 3=Sell, 5=BatteryMgmt)
+            mode_code: MQTT register value to write
             
         Returns:
             True if command sent successfully
         """
+        import time
         from .protocol import ESYCommandBuilder
         
         # Register 57 = systemRunMode / patternMode
         MODE_REGISTER = 57
         
-        self._poll_msg_id += 1
+        # MQTT register value to display name (for logging)
+        MODE_NAMES = {
+            1: "Regular",
+            4: "Emergency", 
+            3: "Sell",
+            5: "BEM",
+            0: "Battery Priority",
+            2: "Grid Priority",
+            6: "PV",
+            7: "Forced Off Grid",
+        }
+        
+        # Use Unix timestamp as msg_id (like the app does)
+        msg_id = int(time.time())
         
         command = ESYCommandBuilder.build_write_command(
             register_address=MODE_REGISTER,
             value=mode_code,
-            msg_id=self._poll_msg_id,
+            msg_id=msg_id,
         )
         
-        _LOGGER.info("Sending mode change command via MQTT: register=%d, value=%d (mode=%s)",
+        _LOGGER.info("Sending mode change command via MQTT: register=%d, value=%d (mode=%s), msg_id=%d",
                     MODE_REGISTER, mode_code,
-                    {1: "Regular", 2: "Emergency", 3: "Sell", 5: "BEM"}.get(mode_code, "Unknown"))
+                    MODE_NAMES.get(mode_code, "Unknown"), msg_id)
         
         return await self.publish_command(command)
     

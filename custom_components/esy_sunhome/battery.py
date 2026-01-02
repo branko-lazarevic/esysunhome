@@ -43,19 +43,48 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
-# MQTT credentials from APK - required for binary protocol
-ESY_MQTT_USERNAME = "admin"
-ESY_MQTT_PASSWORD = "3omKSLaDI7q27OhX"
+ESY_MQTT_USERNAME = ""
+ESY_MQTT_PASSWORD = ""
 
 
 class BatteryState:
     """Represents the current system state - compatible with legacy sensors."""
 
+    # Mode mapping: MQTT systemRunMode value -> Display Name
+    #
+    # 1. MQTT systemRunMode -> display code (via EnergyFlowOptimize.e())
+    # 2. display code -> mode name string (via setModeType())
+    #
+    # MQTT systemRunMode values to write for each mode:
+    # Regular Mode = 1, Emergency Mode = 4, Sell Mode = 3, BEM = 5
+    
+    # This maps MQTT systemRunMode to display name (for READING from inverter)
+    modes_from_mqtt = {
+        1: "Regular Mode",           # MQTT 1 -> code 1 -> Regular
+        4: "Emergency Mode",         # MQTT 4 -> code 2 -> Emergency
+        3: "Electricity Sell Mode",  # MQTT 3 -> code 3 -> Sell
+        5: "Battery Energy Management", # MQTT 5 -> BEM (default)
+        0: "Battery Priority Mode",  # MQTT 0 -> code 6 -> Battery Priority
+        2: "Grid Priority Mode",     # MQTT 2 -> code 7 -> Grid Priority
+        6: "PV Mode",                # MQTT 6 -> code 9 -> PV
+        7: "Forced Off Grid Mode",   # MQTT 7 -> code 10 -> Forced Off Grid
+    }
+    
+    # This maps display name to MQTT value (for WRITING to inverter)
+    # Only modes available in user's app (Regular, Emergency, Sell, BEM)
+    modes_to_mqtt = {
+        "Regular Mode": 1,
+        "Emergency Mode": 4,
+        "Electricity Sell Mode": 3,
+        "Battery Energy Management": 5,
+    }
+    
+    # For the HA dropdown - simple dict of available modes
     modes = {
         1: "Regular Mode",
         2: "Emergency Mode",
         3: "Electricity Sell Mode",
-        5: "Battery Energy Management",
+        4: "Battery Energy Management",
     }
 
     def __init__(self, data: dict) -> None:

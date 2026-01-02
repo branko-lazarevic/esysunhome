@@ -429,31 +429,31 @@ class DynamicTelemetryParser:
         result["batteryCurrent"] = values.get("batteryCurrent") or 0
         
         # === SYSTEM MODE ===
-        # Mode codes from APK analysis:
-        # 1 = Regular Mode
-        # 2 = Emergency Mode  
-        # 3 = Electricity Selling Mode
-        # 4 = AI Mode
-        # 5 = Battery Energy Management
-        # 6 = Battery Priority Mode
-        # 7 = AC Charging Off Emergency Backup Mode
-        # 8 = PV Mode
-        # 9 = Forced Off Grid Mode
+        # Mode mapping from analysis
+        # The MQTT systemRunMode value maps to display code, then to display name:
+        #
+        # MQTT systemRunMode -> display code -> Mode Name
+        # 1 -> 1 -> Regular Mode
+        # 4 -> 2 -> Emergency Mode
+        # 3 -> 3 -> Electricity Sell Mode
+        # 5 -> 8 -> AC Charging Off Emergency (but BEM in our simplified mapping)
+        # 0 -> 6 -> Battery Priority Mode
+        # 2 -> 7 -> Grid Priority Mode
+        # 6 -> 9 -> PV Mode
+        # 7 -> 10 -> Forced Off Grid Mode
         #
         # Register 5 (systemRunMode) = The ACTUAL mode the system is running in
         # Register 6 (systemRunStatus) = Run STATUS indicator (NOT the mode!)
-        #   Status values might indicate: 0=Standby, 5=Running, etc.
         #
         MODE_NAMES = {
             1: "Regular Mode",
-            2: "Emergency Mode",
+            4: "Emergency Mode",
             3: "Electricity Sell Mode",
-            4: "AI Mode",
-            5: "Battery Energy Management",
-            6: "Battery Priority Mode",
-            7: "AC Charging Off Emergency",
-            8: "PV Mode",
-            9: "Forced Off Grid Mode",
+            5: "Battery Energy Management",  # Simplified - maps to AC Charging Off
+            0: "Battery Priority Mode",
+            2: "Grid Priority Mode",
+            6: "PV Mode",
+            7: "Forced Off Grid Mode",
         }
         
         # systemRunMode (register 5) is the ACTUAL mode
@@ -518,6 +518,7 @@ class ESYCommandBuilder:
         """Build a write command for a single register.
         
         Based on MQTT traffic analysis, write commands use:
+        - user_id ending in FC 14 (NOT FC 17 which is for polling!)
         - fun_code = 0x00
         - source_id = 0x10
         - page_index = 0x0800
@@ -531,14 +532,15 @@ class ESYCommandBuilder:
         Args:
             register_address: Register address to write (e.g., 57 for mode)
             value: Value to write
-            user_id: 8-byte user ID (default: all 0xFF)
-            msg_id: Message ID
+            user_id: 8-byte user ID (default: write command ID)
+            msg_id: Message ID (use timestamp for uniqueness)
             
         Returns:
             Binary command to publish to DOWN topic
         """
         if user_id is None:
-            user_id = bytes([0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFC, 0x17])
+            # Write commands use FC 14, polling uses FC 17
+            user_id = bytes([0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFC, 0x14])
         
         # Payload: num_ops(2) + addr(2) + count(2) + value(2)
         payload = struct.pack(">HHHH", 
@@ -570,14 +572,15 @@ class ESYCommandBuilder:
         
         Args:
             writes: List of (address, [values]) tuples
-            user_id: 8-byte user ID (default: all 0xFF)
+            user_id: 8-byte user ID (default: write command ID with FC 14)
             msg_id: Message ID
             
         Returns:
             Binary command to publish to DOWN topic
         """
         if user_id is None:
-            user_id = bytes([0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFC, 0x17])
+            # Write commands use FC 14, polling uses FC 17
+            user_id = bytes([0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFC, 0x14])
         
         # Build payload
         payload = struct.pack(">H", len(writes))  # num_operations

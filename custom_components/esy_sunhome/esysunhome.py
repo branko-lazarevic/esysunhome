@@ -313,7 +313,7 @@ class ESYSunhomeAPI:
         take time to process on the server side.
         
         Args:
-            mode: The operating mode code to set
+            mode: The operating mode code to set (1=Regular, 2=Emergency, 3=Sell, 5=BEM)
         """
         await self.ensure_device_id()
         
@@ -321,12 +321,17 @@ class ESYSunhomeAPI:
         
         _LOGGER.info(f"Setting mode to {mode} for device {self.device_id}")
         
-        payload = {
-            ATTR_SCHEDULE_MODE: mode,
+        # Parameters: code (mode code), deviceId
+        form_data = {
+            "code": str(mode),
             "deviceId": self.device_id
         }
         
-        status, data = await self._make_request_with_auth("POST", url, json=payload)
+        _LOGGER.debug(f"Mode change request to {url} with data: {form_data}")
+        
+        status, data = await self._make_request_with_auth("POST", url, data=form_data)
+        
+        _LOGGER.debug(f"Mode change response: status={status}, data={data}")
         
         if status == 200:
             _LOGGER.info(f"Mode successfully updated to {mode}")
@@ -334,10 +339,12 @@ class ESYSunhomeAPI:
             # Check if response indicates success
             if isinstance(data, dict):
                 success = data.get("success", True)
-                message = data.get("message", "")
+                code = data.get("code", 0)
+                message = data.get("message", "") or data.get("msg", "")
                 
-                if not success:
-                    _LOGGER.warning(f"API returned success=false: {message}")
+                # ESY API returns code=0 for success
+                if code != 0 and not success:
+                    _LOGGER.warning(f"API returned error: code={code}, message={message}")
                     raise Exception(f"Mode change failed: {message}")
         else:
             _LOGGER.error(f"Failed to set mode. Status: {status}, Response: {data}")

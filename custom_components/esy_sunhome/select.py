@@ -153,36 +153,36 @@ class ModeSelect(EsySunhomeEntity, SelectEntity):
         await self._attempt_mode_change(option, mode_key)
 
     async def _attempt_mode_change(self, mode_name: str, mode_key: int) -> None:
-        """Attempt to change mode with API request.
+        """Attempt to change mode via MQTT command directly to inverter.
+        
+        Based on traffic analysis, the app uses MQTT to directly command the
+        inverter. The API is likely just for cloud sync/logging.
         
         Args:
             mode_name: The mode name being changed to (string)
             mode_key: The mode code being changed to (int)
         """
         try:
-            # Send the API request (with built-in retry logic)
-            await self.coordinator.api.set_value(ATTR_SCHEDULE_MODE, mode_key)
+            # Send MQTT command directly to the inverter
+            mqtt_success = await self.coordinator.set_mode_mqtt(mode_key)
             
-            _LOGGER.info(
-                f"✓ API request successful for mode change to: {mode_name}. "
-                f"Waiting for MQTT confirmation... (attempt {self._retry_count + 1}/{MAX_RETRIES + 1})"
-            )
+            if mqtt_success:
+                _LOGGER.info(
+                    f"✓ MQTT command sent for mode change to: {mode_name}. "
+                    f"Waiting for confirmation... (attempt {self._retry_count + 1}/{MAX_RETRIES + 1})"
+                )
+            else:
+                _LOGGER.warning(f"MQTT command failed for mode change to: {mode_name}")
+                raise Exception("MQTT publish failed")
             
-            # Request an MQTT update so we get confirmation even if polling is disabled
-            try:
-                await self.coordinator.api.request_update()
-                _LOGGER.debug("Requested MQTT update for mode change confirmation")
-            except Exception as e:
-                _LOGGER.debug(f"Could not request MQTT update: {e}")
-            
-            # Fire event for API request success
+            # Fire event for request success
             self.hass.bus.async_fire(
                 "esy_sunhome_mode_change_requested",
                 {
                     "device_id": self.coordinator.api.device_id,
                     "mode": mode_name,
                     "mode_code": mode_key,
-                    "status": "api_success",
+                    "status": "mqtt_sent",
                     "attempt": self._retry_count + 1
                 }
             )
@@ -191,10 +191,10 @@ class ModeSelect(EsySunhomeEntity, SelectEntity):
             self._schedule_confirmation_timeout(mode_name, mode_key)
             
         except Exception as err:
-            error_msg = f"Failed to send API request for mode {mode_name}: {err}"
+            error_msg = f"Failed to send mode change command for {mode_name}: {err}"
             _LOGGER.error(error_msg)
             
-            # Revert to actual MQTT state on API error
+            # Revert to actual MQTT state on error
             if self._actual_mqtt_mode_name:
                 self._attr_current_option = self._actual_mqtt_mode_name
             
@@ -309,20 +309,16 @@ class ModeSelect(EsySunhomeEntity, SelectEntity):
                     }
                 )
                 
-                # Retry the API request
+                # Retry MQTT command
                 try:
-                    await self.coordinator.api.set_value(ATTR_SCHEDULE_MODE, mode_key)
-                    _LOGGER.info(
-                        f"✓ Retry API request sent for mode: {mode_name} "
-                        f"(attempt {self._retry_count + 1}/{MAX_RETRIES + 1})"
-                    )
-                    
-                    # Request an MQTT update so we get confirmation even if polling is disabled
-                    try:
-                        await self.coordinator.api.request_update()
-                        _LOGGER.debug("Requested MQTT update for retry confirmation")
-                    except Exception as e:
-                        _LOGGER.debug(f"Could not request MQTT update: {e}")
+                    mqtt_success = await self.coordinator.set_mode_mqtt(mode_key)
+                    if mqtt_success:
+                        _LOGGER.info(
+                            f"✓ Retry MQTT command sent for mode: {mode_name} "
+                            f"(attempt {self._retry_count + 1}/{MAX_RETRIES + 1})"
+                        )
+                    else:
+                        raise Exception("MQTT publish failed")
                     
                     # Schedule another timeout
                     self._schedule_confirmation_timeout(mode_name, mode_key)
@@ -384,15 +380,19 @@ class ModeSelect(EsySunhomeEntity, SelectEntity):
         )
 
     def get_mode_key(self, value: str) -> int:
-        """Get the mode code (int) for a given mode name (string).
+        """Get the MQTT register value to write for a given mode name.
+        
+        Based on APK analysis, the MQTT systemRunMode register value is NOT
+        the same as the display code. The mapping is:
+        - Regular Mode -> write 1
+        - Emergency Mode -> write 4
+        - Electricity Sell Mode -> write 3
+        - Battery Energy Management -> write 5 (may need adjustment)
         
         Args:
             value: The operating mode name (e.g., "Regular Mode")
             
         Returns:
-            The mode code (integer) or None if not found
+            The MQTT register value to write, or None if not found
         """
-        for key, mode in BatteryState.modes.items():
-            if mode == value:
-                return key
-        return None
+        return BatteryState.modes_to_mqtt.get(value)
