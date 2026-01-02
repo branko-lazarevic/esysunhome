@@ -429,54 +429,51 @@ class DynamicTelemetryParser:
         result["batteryCurrent"] = values.get("batteryCurrent") or 0
         
         # === SYSTEM MODE ===
-        # Mode codes: 1=Regular, 2=Emergency, 3=Sell First, 5=Battery Management
-        # 
-        # There are TWO mode values:
-        # - Input Register 5 (FC4): systemRunMode = what's CURRENTLY running
-        # - Holding Register 57 (FC3): systemRunMode = the CONFIGURED pattern/schedule mode
+        # Mode codes from APK analysis:
+        # 1 = Regular Mode
+        # 2 = Emergency Mode  
+        # 3 = Electricity Selling Mode
+        # 4 = AI Mode
+        # 5 = Battery Energy Management
+        # 6 = Battery Priority Mode
+        # 7 = AC Charging Off Emergency Backup Mode
+        # 8 = PV Mode
+        # 9 = Forced Off Grid Mode
         #
-        # When in "Battery Energy Management" (5), the system follows a schedule.
-        # Register 5 will show the current mode (e.g., 1) based on the schedule,
-        # while register 57 shows the pattern (5 = BEM).
+        # Register 5 (systemRunMode) = The ACTUAL mode the system is running in
+        # Register 6 (systemRunStatus) = Run STATUS indicator (NOT the mode!)
+        #   Status values might indicate: 0=Standby, 5=Running, etc.
         #
-        # The select entity should show the pattern mode (57) if available.
         MODE_NAMES = {
             1: "Regular Mode",
             2: "Emergency Mode",
             3: "Electricity Sell Mode",
+            4: "AI Mode",
             5: "Battery Energy Management",
+            6: "Battery Priority Mode",
+            7: "AC Charging Off Emergency",
+            8: "PV Mode",
+            9: "Forced Off Grid Mode",
         }
         
-        # Get mode values - check for pattern mode from multiple sources
-        # Register 5 = systemRunMode (current running mode)
-        # Register 6 = called "systemRunStatus" by API, but actually contains pattern/schedule mode!
-        running_mode = values.get("systemRunMode") or 1  # From input register 5
+        # systemRunMode (register 5) is the ACTUAL mode
+        running_mode = values.get("systemRunMode") or 1
         
-        # Pattern mode could be in different fields depending on protocol source
-        pattern_mode = (
-            values.get("patternMode") or      # Our fallback name
-            values.get("systemRunStatus") or  # API name for register 6 (misleading name!)
-            values.get("workMode") or 
-            0
-        )
+        # systemRunStatus (register 6) is NOT the mode - it's a status indicator
+        run_status = values.get("systemRunStatus") or 0
         
-        # Validate pattern_mode is actually a mode code (1, 2, 3, or 5)
-        # If it's something else (like a status code 0, 4, etc.), ignore it
-        if pattern_mode not in (1, 2, 3, 5):
-            pattern_mode = 0
+        # The display mode should be the running mode
+        display_mode = running_mode
         
-        # For the select entity, use pattern mode if available, else running mode
-        display_mode = pattern_mode if pattern_mode > 0 else running_mode
-        
-        result["systemRunMode"] = running_mode  # Current mode (from MQTT input registers)
-        result["patternMode"] = pattern_mode    # Pattern mode (from MQTT holding registers, if present)
-        result["systemRunStatus"] = values.get("systemRunStatus") or 0
+        result["systemRunMode"] = running_mode  # The actual mode
+        result["systemRunStatus"] = run_status  # Run status (not mode)
+        result["patternMode"] = running_mode    # For backwards compatibility
         result["code"] = MODE_NAMES.get(display_mode, f"Unknown Mode ({display_mode})")
         result["_modeCode"] = display_mode
         result["_runningModeCode"] = running_mode
         
-        _LOGGER.debug("Mode: running=%d, pattern=%d, display='%s'", 
-                     running_mode, pattern_mode, result["code"])
+        _LOGGER.debug("Mode: systemRunMode=%d, systemRunStatus=%d, display='%s'", 
+                     running_mode, run_status, result["code"])
         
         # === RATED POWER ===
         rated = values.get("ratedPower") or 0
