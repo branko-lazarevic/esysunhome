@@ -58,6 +58,12 @@
             "pv2Power": {
                 "name": "PV2 Power"
             },
+            "dc_pv_power": {
+                "name": "DC PV Power (ESY PV)"
+            },
+            "ac_pv_power": {
+                "name": "AC PV Power (AC-Coupled)"
+            },
             "gridPower": {
                 "name": "Grid Power"
             },

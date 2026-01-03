@@ -79,6 +79,8 @@ async def async_setup_entry(
         PvPowerSensor(coordinator=entry.runtime_data),
         Pv1PowerSensor(coordinator=entry.runtime_data),
         Pv2PowerSensor(coordinator=entry.runtime_data),
+        DcPvPowerSensor(coordinator=entry.runtime_data),
+        AcPvPowerSensor(coordinator=entry.runtime_data),
         GridPowerSensor(coordinator=entry.runtime_data),
         LoadPowerSensor(coordinator=entry.runtime_data),
         BatteryPowerSensor(coordinator=entry.runtime_data),
@@ -194,6 +196,22 @@ class Pv2PowerSensor(EsyPowerSensor):
     _attr_translation_key = ATTR_PV2_POWER
     _attr_key = "pv2Power"
     _attr_icon = "mdi:solar-panel"
+    _attr_entity_registry_enabled_default = False
+
+
+class DcPvPowerSensor(EsyPowerSensor):
+    """DC PV Power (ESY PV - panels connected to inverter DC inputs)."""
+    _attr_translation_key = "dc_pv_power"
+    _attr_key = "dcPvPower"
+    _attr_icon = "mdi:solar-panel"
+    _attr_entity_registry_enabled_default = False
+
+
+class AcPvPowerSensor(EsyPowerSensor):
+    """AC PV Power (AC-coupled solar measured by CT2)."""
+    _attr_translation_key = "ac_pv_power"
+    _attr_key = "acPvPower"
+    _attr_icon = "mdi:solar-panel-large"
     _attr_entity_registry_enabled_default = False
 
 

@@ -268,32 +268,44 @@ class DynamicTelemetryParser:
         result = dict(values)
         
         # === PV POWER ===
-        # For DC-coupled: pv1Power + pv2Power
-        # For AC-coupled: energyFlowPvTotalPower (pv1/pv2 will be 0)
+        # DC PV: pv1Power + pv2Power (panels connected to inverter DC inputs)
+        # AC PV: ct2Power when positive (AC-coupled solar, measured by CT2)
+        # Total PV = DC PV + AC PV
+        
         pv1 = values.get("pv1Power", 0) or 0
         pv2 = values.get("pv2Power", 0) or 0
         dc_pv_power = pv1 + pv2
         
-        # energyFlowPvTotalPower is the app's display value - use it for AC-coupled
+        # ct2Power measures AC-coupled solar when positive
+        # (when negative, it's consumption, not generation)
+        ct2_power = values.get("ct2Power", 0) or 0
+        ac_pv_power = max(0, ct2_power)  # Only count positive values as AC PV
+        
+        # energyFlowPvTotalPower is the app's display value - may include both
         energy_flow_pv = values.get("energyFlowPvTotalPower", 0) or 0
         
-        # Use DC-coupled value if available, otherwise use energy flow (AC-coupled)
-        if dc_pv_power > 0:
-            result["pvPower"] = dc_pv_power
+        # Calculate total PV power
+        # If we have DC PV, add AC PV to get total
+        # Otherwise fall back to energyFlowPvTotalPower
+        if dc_pv_power > 0 or ac_pv_power > 0:
+            total_pv_power = dc_pv_power + ac_pv_power
         else:
-            result["pvPower"] = int(energy_flow_pv)
+            total_pv_power = int(energy_flow_pv)
         
+        result["pvPower"] = total_pv_power
+        result["dcPvPower"] = dc_pv_power  # ESY PV (DC-coupled)
+        result["acPvPower"] = ac_pv_power  # AC PV (AC-coupled from CT2)
         result["pv1Power"] = pv1
         result["pv2Power"] = pv2
-        result["pvLine"] = 1 if result["pvPower"] > 10 else 0
+        result["pvLine"] = 1 if total_pv_power > 10 else 0
         
-        _LOGGER.debug("PV: pv1=%d, pv2=%d, energyFlow=%d -> pvPower=%d",
-                     pv1, pv2, int(energy_flow_pv), result["pvPower"])
+        _LOGGER.debug("PV: pv1=%d, pv2=%d (DC=%d), ct2=%d (AC=%d), energyFlow=%d -> total=%d",
+                     pv1, pv2, dc_pv_power, ct2_power, ac_pv_power, int(energy_flow_pv), total_pv_power)
         
         # === GRID POWER ===
         # Different inverter setups use different sensors for grid power:
         # - Some use ct1Power (with sign)
-        # - Some use ct2Power 
+        # - Some use ct2Power (but positive ct2Power = AC PV, not grid!)
         # - gridActivePower is often accurate but sometimes has scaling issues
         # - energyFlowGridPower matches the app display
         # Negative values = importing FROM grid
@@ -305,6 +317,7 @@ class DynamicTelemetryParser:
         
         # Choose the best source based on which has meaningful data
         # Prefer ct1Power if it has significant magnitude, otherwise fall back
+        # NOTE: ct2Power when positive is AC-coupled PV, not grid!
         if abs(ct1_power) > 10:
             grid_power = ct1_power
             grid_source = "ct1"
@@ -314,12 +327,10 @@ class DynamicTelemetryParser:
         elif abs(energy_flow_grid) > 10:
             grid_power = int(energy_flow_grid)
             grid_source = "flow"
-        elif abs(ct2_power) > 10:
-            # ct2Power may not have sign - use gridActivePower sign if available
-            if grid_active_power < 0:
-                grid_power = -abs(ct2_power)
-            else:
-                grid_power = ct2_power
+        elif ct2_power < -10:
+            # Only use ct2Power for grid when it's NEGATIVE (not AC PV)
+            # Negative ct2Power could indicate grid import in some setups
+            grid_power = ct2_power
             grid_source = "ct2"
         else:
             grid_power = ct1_power or grid_active_power or int(energy_flow_grid)
