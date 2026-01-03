@@ -121,7 +121,7 @@ async def async_get_config_entry_diagnostics(
     
     # Build diagnostics
     diagnostics = {
-        "integration_version": "2.1.7",
+        "integration_version": "2.1.8",
         "config_entry": {
             "entry_id": entry.entry_id,
             "version": entry.version,

@@ -139,6 +139,9 @@
             "batteryStatusText": {
                 "name": "Battery Status"
             },
+            "battery_status_code": {
+                "name": "Battery Status Code"
+            },
             "ct1Power": {
                 "name": "CT1 Power"
             },

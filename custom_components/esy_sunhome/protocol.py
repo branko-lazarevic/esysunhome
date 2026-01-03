@@ -367,41 +367,81 @@ class DynamicTelemetryParser:
             values.get("energyFlowBatt", 0) or 0
         )
         
-        batt_power = raw_batt_power
+        # Battery power from inverter is absolute - use batteryStatus to determine direction
+        # batteryStatus codes from APK/Modbus register 28:
+        # 0: Standby
+        # 1: Charging
+        # 2: Charge Topping (charging)
+        # 3: Float Charge (charging)
+        # 4: Full
+        # 5: Discharging
+        # 6+: Charging
+        battery_status = values.get("batteryStatus", 0) or 0
         
-        # Battery sign convention from inverter:
-        # Positive = discharging (power flowing FROM battery)
-        # Negative = charging (power flowing TO battery)
-        if batt_power > 0:
+        # Status text mapping
+        BATTERY_STATUS_TEXT = {
+            0: "Standby",
+            1: "Charging",
+            2: "Charge Topping",
+            3: "Float Charge",
+            4: "Full",
+            5: "Discharging",
+        }
+        
+        # Determine charge/discharge based on status code
+        if battery_status == 5:
+            # Discharging
             is_charging = False
             is_discharging = True
-        elif batt_power < 0:
+            status_text = "Discharging"
+        elif battery_status in (1, 2, 3, 6):
+            # Charging (various charging states)
             is_charging = True
             is_discharging = False
-        else:
+            status_text = BATTERY_STATUS_TEXT.get(battery_status, "Charging")
+        elif battery_status == 4:
+            # Full - not actively charging/discharging
             is_charging = False
             is_discharging = False
+            status_text = "Full"
+        else:
+            # 0 or unknown - standby/idle
+            is_charging = False
+            is_discharging = False
+            status_text = "Standby"
+        
+        # Make battery power absolute since direction comes from status
+        batt_power = abs(raw_batt_power)
+        
+        # If power is 0 but status says full, keep full status
+        # If power is 0 and status is not 4 (full), show as standby
+        if batt_power == 0 and battery_status != 4:
+            is_charging = False
+            is_discharging = False
+            status_text = "Standby"
         
         result["batteryPower"] = batt_power
+        result["batteryStatus"] = battery_status
         
         # Directional battery power for HA sensors
-        if is_charging:
-            result["batteryImport"] = abs(batt_power)  # Charging = import (into battery)
-            result["batteryExport"] = 0
-            result["batteryStatusText"] = "Charging"
-            result["batteryLine"] = 2
-        elif is_discharging:
+        if is_discharging:
             result["batteryImport"] = 0
             result["batteryExport"] = batt_power  # Discharging = export (from battery)
-            result["batteryStatusText"] = "Discharging"
+            result["batteryStatusText"] = status_text
             result["batteryLine"] = 1
+        elif is_charging:
+            result["batteryImport"] = batt_power  # Charging = import (into battery)
+            result["batteryExport"] = 0
+            result["batteryStatusText"] = status_text
+            result["batteryLine"] = 2
         else:
             result["batteryImport"] = 0
             result["batteryExport"] = 0
-            result["batteryStatusText"] = "Idle"
+            result["batteryStatusText"] = status_text
             result["batteryLine"] = 0
         
-        _LOGGER.debug("Battery: power=%d (%s)", batt_power, result["batteryStatusText"])
+        _LOGGER.debug("Battery: raw=%d, status=%d (%s), power=%d", 
+                     raw_batt_power, battery_status, status_text, batt_power)
         
         # === LOAD POWER ===
         load_power = (

@@ -118,6 +118,7 @@ async def async_setup_entry(
         # === BATTERY HEALTH ===
         BatterySohSensor(coordinator=entry.runtime_data),
         BatteryStatusTextSensor(coordinator=entry.runtime_data),
+        BatteryStatusCodeSensor(coordinator=entry.runtime_data),
         
         # === CT/METER POWER ===
         Ct1PowerSensor(coordinator=entry.runtime_data),
@@ -455,7 +456,15 @@ class BatteryStatusTextSensor(EsySensorBase):
     _attr_translation_key = ATTR_BATTERY_STATUS_TEXT
     _attr_key = "batteryStatusText"
     _attr_icon = "mdi:battery-clock"
-    _attr_options = ["Idle", "Charging", "Discharging", "Full", "Unknown"]
+    _attr_options = ["Standby", "Charging", "Charge Topping", "Float Charge", "Full", "Discharging", "Unknown"]
+
+
+class BatteryStatusCodeSensor(EsySensorBase):
+    """Battery Status Code (0=Standby, 1=Charging, 2=Charge Topping, 3=Float Charge, 4=Full, 5=Discharging)."""
+    _attr_translation_key = "battery_status_code"
+    _attr_key = "batteryStatus"
+    _attr_icon = "mdi:battery-sync"
+    _attr_entity_registry_enabled_default = False
 
 
 # =============================================================================
