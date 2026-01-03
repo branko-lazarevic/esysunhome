@@ -330,7 +330,7 @@ class DynamicTelemetryParser:
         elif ct2_power < -10:
             # Only use ct2Power for grid when it's NEGATIVE (not AC PV)
             # Negative ct2Power could indicate grid import in some setups
-            grid_power = ct2_power
+                grid_power = ct2_power
             grid_source = "ct2"
         else:
             grid_power = ct1_power or grid_active_power or int(energy_flow_grid)
@@ -369,12 +369,15 @@ class DynamicTelemetryParser:
         
         batt_power = raw_batt_power
         
+        # Battery sign convention from inverter:
+        # Positive = discharging (power flowing FROM battery)
+        # Negative = charging (power flowing TO battery)
         if batt_power > 0:
-            is_charging = True
-            is_discharging = False
-        elif batt_power < 0:
             is_charging = False
             is_discharging = True
+        elif batt_power < 0:
+            is_charging = True
+            is_discharging = False
         else:
             is_charging = False
             is_discharging = False
@@ -383,13 +386,13 @@ class DynamicTelemetryParser:
         
         # Directional battery power for HA sensors
         if is_charging:
-            result["batteryImport"] = batt_power  # Charging = import
+            result["batteryImport"] = abs(batt_power)  # Charging = import (into battery)
             result["batteryExport"] = 0
             result["batteryStatusText"] = "Charging"
             result["batteryLine"] = 2
         elif is_discharging:
             result["batteryImport"] = 0
-            result["batteryExport"] = abs(batt_power)  # Discharging = export
+            result["batteryExport"] = batt_power  # Discharging = export (from battery)
             result["batteryStatusText"] = "Discharging"
             result["batteryLine"] = 1
         else:
@@ -440,7 +443,7 @@ class DynamicTelemetryParser:
         result["batteryCurrent"] = values.get("batteryCurrent") or 0
         
         # === SYSTEM MODE ===
-        # Mode mapping from analysis
+        # Mode mapping from APK analysis (EnergyFlowOptimize.e() + setModeType())
         # The MQTT systemRunMode value maps to display code, then to display name:
         #
         # MQTT systemRunMode -> display code -> Mode Name
@@ -460,7 +463,7 @@ class DynamicTelemetryParser:
             1: "Regular Mode",
             4: "Emergency Mode",
             3: "Electricity Sell Mode",
-            5: "Battery Energy Management",  # Simplified - maps to AC Charging Off
+            5: "Battery Energy Management",  # Simplified - APK maps to AC Charging Off
             0: "Battery Priority Mode",
             2: "Grid Priority Mode",
             6: "PV Mode",
