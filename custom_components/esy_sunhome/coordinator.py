@@ -4,7 +4,7 @@ import asyncio
 import logging
 import ssl
 import os
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Any, Optional
 
 import aiomqtt
@@ -89,6 +89,8 @@ class ESYSunhomeCoordinator(DataUpdateCoordinator):
         
         # Data state
         self._last_data: dict = {}
+        self._last_raw_values: dict = {}  # For diagnostics
+        self._last_mqtt_time: Optional[str] = None  # For diagnostics
         self._poll_msg_id: int = 0  # Incrementing message ID for poll requests
         
         # MQTT topics
@@ -334,6 +336,10 @@ class ESYSunhomeCoordinator(DataUpdateCoordinator):
             
             if data:
                 self._last_data = data
+                # Store raw values for diagnostics
+                self._last_raw_values = dict(data)
+                self._last_mqtt_time = datetime.now().isoformat()
+                
                 self.async_set_updated_data(TelemetryData(data))
                 
                 _LOGGER.debug("Updated telemetry: PV=%dW, Grid=%dW, Batt=%dW, Load=%dW, SOC=%d%%",

@@ -1,0 +1,13 @@
+dump_debug:
+  name: Dump Debug Info
+  description: >-
+    Dumps all current register values and parsed data to the Home Assistant log.
+    Useful for debugging issues - users can share the log output.
+    
+    The dump includes:
+    - Configuration info (device SN, protocol parameters)
+    - MQTT connection status
+    - All raw register values received from the inverter
+    - All parsed/computed sensor values
+    
+    To view the output, go to Settings → System → Logs and search for "ESY SUNHOME DEBUG DUMP"

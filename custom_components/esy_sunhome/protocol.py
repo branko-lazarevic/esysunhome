@@ -330,7 +330,7 @@ class DynamicTelemetryParser:
         elif ct2_power < -10:
             # Only use ct2Power for grid when it's NEGATIVE (not AC PV)
             # Negative ct2Power could indicate grid import in some setups
-                grid_power = ct2_power
+            grid_power = ct2_power
             grid_source = "ct2"
         else:
             grid_power = ct1_power or grid_active_power or int(energy_flow_grid)
