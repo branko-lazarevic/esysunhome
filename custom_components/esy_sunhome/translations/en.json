@@ -171,6 +171,12 @@
             },
             "systemRunStatus": {
                 "name": "System Status"
+            },
+            "configured_mode": {
+                "name": "Configured Mode"
+            },
+            "configured_mode_code": {
+                "name": "Configured Mode Code"
             }
         },
         "binary_sensor": {

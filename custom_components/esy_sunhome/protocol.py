@@ -572,7 +572,7 @@ class ESYCommandBuilder:
         """Build a write command for a single register.
         
         Based on MQTT traffic analysis, write commands use:
-        - user_id ending in FC 14 (NOT FC 17 which is for polling!)
+        - user_id ending in FF FC (captured from real traffic)
         - fun_code = 0x00
         - source_id = 0x10
         - page_index = 0x0800
@@ -593,7 +593,8 @@ class ESYCommandBuilder:
             Binary command to publish to DOWN topic
         """
         if user_id is None:
-            # Write commands use FC 14, polling uses FC 17
+            # FC 14 is used for single register writes (confirmed from traffic analysis)
+            # FC 17 is used for polling
             user_id = bytes([0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFC, 0x14])
         
         # Payload: num_ops(2) + addr(2) + count(2) + value(2)
@@ -626,15 +627,15 @@ class ESYCommandBuilder:
         
         Args:
             writes: List of (address, [values]) tuples
-            user_id: 8-byte user ID (default: write command ID with FC 14)
+            user_id: 8-byte user ID (default: write command ID)
             msg_id: Message ID
             
         Returns:
             Binary command to publish to DOWN topic
         """
         if user_id is None:
-            # Write commands use FC 14, polling uses FC 17
-            user_id = bytes([0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFC, 0x14])
+            # FC 17 is used for multi-register writes (confirmed from traffic analysis)
+            user_id = bytes([0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFC, 0x17])
         
         # Build payload
         payload = struct.pack(">H", len(writes))  # num_operations

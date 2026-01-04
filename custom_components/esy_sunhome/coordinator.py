@@ -92,6 +92,7 @@ class ESYSunhomeCoordinator(DataUpdateCoordinator):
         self._last_raw_values: dict = {}  # For diagnostics
         self._last_mqtt_time: Optional[str] = None  # For diagnostics
         self._poll_msg_id: int = 0  # Incrementing message ID for poll requests
+        self._configured_mode: Optional[str] = None  # User-configured mode from API (e.g., "5" for BEM)
         
         # MQTT topics
         self._topic_up = f"/ESY/PVVC/{device_sn}/UP"
@@ -161,6 +162,13 @@ class ESYSunhomeCoordinator(DataUpdateCoordinator):
     async def async_config_entry_first_refresh(self) -> None:
         """Perform first refresh and start MQTT."""
         await super().async_config_entry_first_refresh()
+        
+        # Fetch configured mode from API
+        try:
+            self._configured_mode = await self.api.get_configured_mode()
+            _LOGGER.info("Fetched configured mode from API: %s", self._configured_mode)
+        except Exception as e:
+            _LOGGER.warning("Failed to fetch configured mode: %s", e)
         
         # Start MQTT listener
         self._mqtt_task = asyncio.create_task(self._mqtt_loop())
@@ -335,12 +343,35 @@ class ESYSunhomeCoordinator(DataUpdateCoordinator):
             data = self.parser.parse_message(payload)
             
             if data:
-                self._last_data = data
+                # Add configured mode from API if available
+                if self._configured_mode is not None:
+                    data["configuredModeCode"] = self._configured_mode
+                    # Map code to name for display
+                    CONFIGURED_MODE_NAMES = {
+                        "1": "Regular Mode",
+                        "2": "Emergency Mode",
+                        "3": "Electricity Sell Mode",
+                        "4": "Emergency Mode",  # Both 2 and 4 map to Emergency in some versions
+                        "5": "Battery Energy Management",
+                        "6": "Battery Priority Mode",
+                        "7": "Grid Priority Mode",
+                        "8": "AC Charging Off Emergency",
+                        "9": "PV Mode",
+                        "10": "Forced Off Grid Mode",
+                    }
+                    data["configuredMode"] = CONFIGURED_MODE_NAMES.get(
+                        self._configured_mode, 
+                        f"Mode {self._configured_mode}"
+                    )
+                
+                # Merge new data with existing data (preserve fields not in this update)
+                # This prevents brief "unknown" states when partial messages arrive
+                self._last_data.update(data)
                 # Store raw values for diagnostics
-                self._last_raw_values = dict(data)
+                self._last_raw_values = dict(self._last_data)
                 self._last_mqtt_time = datetime.now().isoformat()
                 
-                self.async_set_updated_data(TelemetryData(data))
+                self.async_set_updated_data(TelemetryData(self._last_data))
                 
                 _LOGGER.debug("Updated telemetry: PV=%dW, Grid=%dW, Batt=%dW, Load=%dW, SOC=%d%%",
                              data.get("pvPower", 0),
@@ -432,7 +463,23 @@ class ESYSunhomeCoordinator(DataUpdateCoordinator):
                     MODE_REGISTER, mode_code,
                     MODE_NAMES.get(mode_code, "Unknown"), msg_id)
         
-        return await self.publish_command(command)
+        success = await self.publish_command(command)
+        
+        if success:
+            # Refresh configured mode from API after a delay (server needs time to process)
+            async def refresh_configured_mode():
+                await asyncio.sleep(3)  # Wait for server to update
+                try:
+                    new_mode = await self.api.get_configured_mode()
+                    if new_mode:
+                        self._configured_mode = new_mode
+                        _LOGGER.info("Refreshed configured mode from API: %s", new_mode)
+                except Exception as e:
+                    _LOGGER.warning("Failed to refresh configured mode: %s", e)
+            
+            asyncio.create_task(refresh_configured_mode())
+        
+        return success
     
     async def write_register(self, register_address: int, value: int) -> bool:
         """Write a value to a register via MQTT.

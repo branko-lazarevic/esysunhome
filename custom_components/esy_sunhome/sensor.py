@@ -135,6 +135,8 @@ async def async_setup_entry(
         RatedPowerSensor(coordinator=entry.runtime_data),
         SystemModeSensor(coordinator=entry.runtime_data),
         SystemStatusSensor(coordinator=entry.runtime_data),
+        ConfiguredModeSensor(coordinator=entry.runtime_data),
+        ConfiguredModeCodeSensor(coordinator=entry.runtime_data),
     ]
     
     async_add_entities(entities)
@@ -556,4 +558,19 @@ class SystemStatusSensor(EsySensorBase):
     _attr_translation_key = ATTR_SYSTEM_RUN_STATUS
     _attr_key = "systemRunStatus"
     _attr_icon = "mdi:information"
+    _attr_entity_registry_enabled_default = False
+
+
+class ConfiguredModeSensor(EsySensorBase):
+    """Configured Mode - the mode selected in the app (from API)."""
+    _attr_translation_key = "configured_mode"
+    _attr_key = "configuredMode"
+    _attr_icon = "mdi:cog-outline"
+
+
+class ConfiguredModeCodeSensor(EsySensorBase):
+    """Configured Mode Code - the raw mode code from API."""
+    _attr_translation_key = "configured_mode_code"
+    _attr_key = "configuredModeCode"
+    _attr_icon = "mdi:numeric"
     _attr_entity_registry_enabled_default = False

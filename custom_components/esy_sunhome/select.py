@@ -153,10 +153,11 @@ class ModeSelect(EsySunhomeEntity, SelectEntity):
         await self._attempt_mode_change(option, mode_key)
 
     async def _attempt_mode_change(self, mode_name: str, mode_key: int) -> None:
-        """Attempt to change mode via MQTT command directly to inverter.
+        """Attempt to change mode via MQTT command and API call.
         
         Based on traffic analysis, the app uses MQTT to directly command the
-        inverter. The API is likely just for cloud sync/logging.
+        inverter AND calls the API for cloud sync. Some inverters may only
+        respond to one method, so we do both for best compatibility.
         
         Args:
             mode_name: The mode name being changed to (string)
@@ -173,6 +174,16 @@ class ModeSelect(EsySunhomeEntity, SelectEntity):
                 )
             else:
                 _LOGGER.warning(f"MQTT command failed for mode change to: {mode_name}")
+            
+            # Also call the API for cloud sync (some inverters may need this)
+            try:
+                await self.coordinator.api.set_mode(mode_key)
+                _LOGGER.info(f"✓ API call also sent for mode change to: {mode_name}")
+            except Exception as api_err:
+                # API failure is not critical if MQTT worked
+                _LOGGER.warning(f"API call failed (MQTT may still work): {api_err}")
+            
+            if not mqtt_success:
                 raise Exception("MQTT publish failed")
             
             # Fire event for request success
