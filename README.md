@@ -2,6 +2,12 @@
 
 A Home Assistant integration for ESY Sunhome battery systems, providing monitoring and control via MQTT.
 
+> ### ☁️ Don't want to run Home Assistant?
+> This integration is for self-hosting on Home Assistant. If you'd rather not set up and
+> maintain HA yourself, **[SolanIQ](https://solaniq.ai)** is a hosted service that optimises
+> your ESY Sunhome battery against live wholesale prices and solar forecasts — no Home
+> Assistant required. → **[Try it at solaniq.ai](https://solaniq.ai)**
+
 ![Example Screenshot](/screenshot.png)
 
 ## ⚠️ Important: Firmware Requirement
