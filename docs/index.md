@@ -7,6 +7,12 @@ title: ESY Sunhome Battery Home Assistant Integration
 
 Here i'll be documenting my journey to optimize and automate my ESY sunhome battery. Prior to having the battery installed, i had a 10kW PV system so I had a bunch of existing automations to control devices.
 
+> ### ☁️ Don't want to run Home Assistant?
+> This integration is for self-hosting on Home Assistant. If you'd rather not set up and
+> maintain HA yourself, **[SolanIQ](https://solaniq.ai)** is a hosted service that optimises
+> your ESY Sunhome battery against live wholesale prices and solar forecasts — no Home
+> Assistant required. → **[Try it at solaniq.ai](https://solaniq.ai)**
+
 ![ESY Sunhome Integration](screenshot.png)
 
 ## Dashboard
