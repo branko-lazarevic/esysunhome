@@ -55,36 +55,56 @@ class BatteryState:
     # 1. MQTT systemRunMode -> display code (via EnergyFlowOptimize.e())
     # 2. display code -> mode name string (via setModeType())
     #
-    # MQTT systemRunMode values to write for each mode:
-    # Regular Mode = 1, Emergency Mode = 4, Sell Mode = 3, BEM = 5
-    
-    # This maps MQTT systemRunMode to display name (for READING from inverter)
+    # API and MQTT use DIFFERENT code values for some modes.
+    # API codes are used with POST /api/lsypattern/switch
+    # MQTT codes are what systemRunMode (register 5) reports
+    #
+    # Note: code 4 in API = "AI Mode" (not currently on phone app)
+    # Note: code 5 in MQTT register 57 = "AC Charging Off Emergency Backup" (not BEM, not sure what that does)
+
+    # BEM (Battery Energy Management) is a server-side scheduling feature,
+    # not an inverter mode. It's controlled separately via a switch entity.
+    BEM_API_CODE = 5
+
+    # MQTT systemRunMode (register 5) -> display name (for READING from inverter)
     modes_from_mqtt = {
-        1: "Regular Mode",           # MQTT 1 -> code 1 -> Regular
-        4: "Emergency Mode",         # MQTT 4 -> code 2 -> Emergency
-        3: "Electricity Sell Mode",  # MQTT 3 -> code 3 -> Sell
-        5: "Battery Energy Management", # MQTT 5 -> BEM (default)
-        0: "Battery Priority Mode",  # MQTT 0 -> code 6 -> Battery Priority
-        2: "Grid Priority Mode",     # MQTT 2 -> code 7 -> Grid Priority
-        6: "PV Mode",                # MQTT 6 -> code 9 -> PV
-        7: "Forced Off Grid Mode",   # MQTT 7 -> code 10 -> Forced Off Grid
+        1: "Regular Mode",
+        4: "Emergency Mode",
+        3: "Electricity Sell Mode",
+        5: "AC Charging Off Emergency Mode",
+        0: "Battery Priority Mode",
+        2: "Grid Priority Mode",
+        6: "PV Mode",
+        7: "Forced Off Grid Mode",
     }
-    
-    # This maps display name to MQTT value (for WRITING to inverter)
-    # Only modes available in user's app (Regular, Emergency, Sell, BEM)
+
+    # Display name -> API code (for WRITING via POST /api/lsypattern/switch)
+    # Only base modes — BEM is handled by the BEM switch entity
+    modes_to_api = {
+        "Regular Mode": 1,
+        "Emergency Mode": 2,          # API code for Emergency
+        "Electricity Sell Mode": 3,
+    }
+
+    # Display name -> MQTT register value (for WRITING to inverter via MQTT)
     modes_to_mqtt = {
         "Regular Mode": 1,
-        "Emergency Mode": 4,
         "Electricity Sell Mode": 3,
-        "Battery Energy Management": 5,
+        "Emergency Mode": 4,
     }
-    
-    # For the HA dropdown - simple dict of available modes
+
+    # MQTT register 5 value -> API code (for reverting from BEM to current base mode)
+    mqtt_to_api = {
+        1: 1,   # Regular
+        3: 3,   # Electricity Sell
+        4: 2,   # Emergency (MQTT 4 → API 2)
+    }
+
+    # For the HA dropdown - base operating modes only
     modes = {
         1: "Regular Mode",
         2: "Emergency Mode",
         3: "Electricity Sell Mode",
-        4: "Battery Energy Management",
     }
 
     def __init__(self, data: dict) -> None:

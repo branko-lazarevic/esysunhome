@@ -216,7 +216,7 @@ class DynamicTelemetryParser:
         for segment in segments:
             base_addr = segment.segment_address
             values_bytes = segment.values
-            
+
             # Use segment_type as the function code (3=Holding, 4=Input)
             fc = segment.segment_type
 
@@ -528,7 +528,7 @@ class DynamicTelemetryParser:
             1: "Regular Mode",
             4: "Emergency Mode",
             3: "Electricity Sell Mode",
-            5: "Battery Energy Management",  # Simplified - APK maps to AC Charging Off
+            5: "AC Charging Off Emergency Mode",  # MQTT register 5 value 5 is NOT BEM
             0: "Battery Priority Mode",
             2: "Grid Priority Mode",
             6: "PV Mode",
