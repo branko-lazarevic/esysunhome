@@ -405,9 +405,19 @@ class ESYSunhomeCoordinator(DataUpdateCoordinator):
         """
         import time
         from .protocol import ESYCommandBuilder
-        
-        # Register 57 = systemRunMode / patternMode
+        from .protocol_api import FC_READ_HOLDING
+
+        # systemRunMode register address varies by model (57 single-phase, 72
+        # three-phase, where 57 is clearMeterEnergy). Resolve it from the
+        # per-model register map; fall back to 57 only if the map is unavailable.
         MODE_REGISTER = 57
+        if self.protocol:
+            reg = self.protocol.get_register_by_key("systemRunMode", FC_READ_HOLDING)
+            if reg is not None:
+                MODE_REGISTER = reg.address
+                _LOGGER.debug("Resolved systemRunMode write register to %d", MODE_REGISTER)
+            else:
+                _LOGGER.warning("systemRunMode not in register map; using fallback register 57")
         
         # MQTT register value to display name (for logging)
         MODE_NAMES = {

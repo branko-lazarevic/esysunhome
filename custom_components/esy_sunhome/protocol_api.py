@@ -83,6 +83,26 @@ class ProtocolDefinition:
         elif function_code == FC_READ_HOLDING:
             return self.holding_registers.get(address)
         return None
+
+    def get_register_by_key(
+        self, data_key: str, function_code: int = FC_READ_HOLDING
+    ) -> Optional[RegisterDefinition]:
+        """Look up a register by its dataKey (e.g. "systemRunMode").
+
+        Register *addresses* vary by model, so writes/reads should resolve the
+        address from the dataKey via the per-model map rather than hardcoding it
+        (e.g. systemRunMode is 57 on single-phase, 72 on three-phase; 57 is
+        clearMeterEnergy on three-phase).
+        """
+        regs = (
+            self.holding_registers
+            if function_code == FC_READ_HOLDING
+            else self.input_registers
+        )
+        for reg in regs.values():
+            if reg.data_key == data_key:
+                return reg
+        return None
     
     def is_expired(self) -> bool:
         """Check if the cached protocol is expired."""
