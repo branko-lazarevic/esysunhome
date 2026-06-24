@@ -108,20 +108,65 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     device_id = entry.data.get(CONF_DEVICE_ID, "")
     device_sn = entry.data.get(CONF_DEVICE_SN, device_id)
     
-    # Get protocol parameters (with defaults for backward compatibility)
+    # Protocol parameters. Start from stored values / defaults, but the device
+    # LIST record has pvPower=null and the config flow read versionMcu under the
+    # wrong key, which can select a single-phase map for a three-phase unit
+    # (telemetry then decodes at the wrong register addresses → garbage). The
+    # authoritative source is /api/lsydevice/info, so re-detect from there at
+    # startup (this is what the solaniq optimizer does to decode correctly).
     pv_power = entry.data.get(CONF_PV_POWER, DEFAULT_PV_POWER)
     tp_type = entry.data.get(CONF_TP_TYPE, DEFAULT_TP_TYPE)
     mcu_version = entry.data.get(CONF_MCU_VERSION, DEFAULT_MCU_VERSION)
-    
+
     # Create API instance
     api = ESYSunhomeAPI(username, password, device_id)
-    
+
     protocol = None
     try:
         # Authenticate
         await api.get_bearer_token()
         _LOGGER.info("Successfully authenticated with ESY API")
-        
+
+        # Re-detect protocol parameters from the authoritative device-info
+        # endpoint (pvPower / tpType / versionMcu). Falls back to stored/default
+        # values if the call fails so setup still proceeds.
+        try:
+            device_info = await api.get_device_info()
+            det_pv = device_info.get("pvPower")
+            det_tp = device_info.get("tpType")
+            det_mcu = device_info.get("versionMcu") or device_info.get("mcuVersion")
+            if det_pv:
+                pv_power = int(det_pv)
+            if det_tp:
+                tp_type = int(det_tp)
+            if det_mcu:
+                mcu_version = int(det_mcu)
+            _LOGGER.info(
+                "Detected protocol params from device info: pvPower=%d, tpType=%d, mcuVersion=%d",
+                pv_power, tp_type, mcu_version,
+            )
+            # Persist corrected params so they survive restarts.
+            if (
+                entry.data.get(CONF_PV_POWER) != pv_power
+                or entry.data.get(CONF_TP_TYPE) != tp_type
+                or entry.data.get(CONF_MCU_VERSION) != mcu_version
+            ):
+                hass.config_entries.async_update_entry(
+                    entry,
+                    data={
+                        **entry.data,
+                        CONF_PV_POWER: pv_power,
+                        CONF_TP_TYPE: tp_type,
+                        CONF_MCU_VERSION: mcu_version,
+                    },
+                )
+                _LOGGER.info("Updated stored protocol params from device info")
+        except Exception as e:
+            _LOGGER.warning(
+                "Could not read device info for protocol params (%s); using "
+                "pvPower=%d tpType=%d mcuVersion=%d", e, pv_power, tp_type, mcu_version,
+            )
+
         # Load protocol definition from API
         protocol_api = get_protocol_api(api.access_token)
         protocol = await protocol_api.get_protocol_definition(
@@ -129,7 +174,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             tp_type=tp_type,
             mcu_version=mcu_version,
         )
-        
+
         if protocol:
             _LOGGER.info("Loaded protocol: %d input regs, %d holding regs, %d segments",
                         len(protocol.input_registers),
