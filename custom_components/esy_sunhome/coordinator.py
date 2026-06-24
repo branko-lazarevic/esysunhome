@@ -92,6 +92,15 @@ class ESYSunhomeCoordinator(DataUpdateCoordinator):
         self._last_raw_values: dict = {}  # For diagnostics
         self._last_mqtt_time: Optional[str] = None  # For diagnostics
         self._poll_msg_id: int = 0  # Incrementing message ID for poll requests
+
+        # BEM (Battery Energy Management) state — tracked via API
+        # BEM is a server-side scheduling feature, not visible on MQTT register 5
+        self.bem_active: bool = False
+        self._bem_check_counter: int = 12  # Start at interval to check on first poll
+        self._bem_check_interval: int = 12  # Check every 12th poll (~3min)
+
+        # Schedule/SOC data — fetched from API alongside BEM checks
+        self.schedule_data: Optional[dict] = None
         
         # MQTT topics
         self._topic_up = f"/ESY/PVVC/{device_sn}/UP"
@@ -128,6 +137,12 @@ class ESYSunhomeCoordinator(DataUpdateCoordinator):
                 except Exception as e:
                     _LOGGER.warning("Failed to request update from API: %s", e)
         
+        # Periodically check BEM state via API
+        self._bem_check_counter += 1
+        if self._bem_check_counter >= self._bem_check_interval:
+            self._bem_check_counter = 0
+            await self._check_bem_state()
+
         # Return cached data
         return TelemetryData(self._last_data)
     
@@ -157,6 +172,32 @@ class ESYSunhomeCoordinator(DataUpdateCoordinator):
         except Exception as e:
             _LOGGER.error("Failed to send poll request: %s", e)
             return False
+
+    async def _check_bem_state(self) -> None:
+        """Check if BEM is active and fetch schedule/SOC data.
+
+        The API 'code' field is the only reliable source for BEM state.
+        MQTT register 5 reports the base mode even when BEM is active.
+        """
+        try:
+            device_info = await self.api.get_device_info()
+            api_code = device_info.get("code")
+            if api_code is not None:
+                was_active = self.bem_active
+                self.bem_active = int(api_code) == 5
+                if was_active != self.bem_active:
+                    _LOGGER.info(
+                        "BEM state changed: %s",
+                        "active" if self.bem_active else "inactive",
+                    )
+        except Exception as e:
+            _LOGGER.debug("Failed to check BEM state: %s", e)
+
+        # Fetch schedule data (SOC cutoffs)
+        try:
+            self.schedule_data = await self.api.get_schedule()
+        except Exception as e:
+            _LOGGER.debug("Failed to fetch schedule data: %s", e)
 
     async def async_config_entry_first_refresh(self) -> None:
         """Perform first refresh and start MQTT."""
@@ -395,7 +436,6 @@ class ESYSunhomeCoordinator(DataUpdateCoordinator):
         - Regular Mode -> write 1
         - Emergency Mode -> write 4
         - Electricity Sell Mode -> write 3
-        - Battery Energy Management -> write 5
         
         Args:
             mode_code: MQTT register value to write
@@ -405,16 +445,26 @@ class ESYSunhomeCoordinator(DataUpdateCoordinator):
         """
         import time
         from .protocol import ESYCommandBuilder
-        
-        # Register 57 = systemRunMode / patternMode
+        from .protocol_api import FC_READ_HOLDING
+
+        # systemRunMode register address varies by model (57 single-phase, 72
+        # three-phase, where 57 is clearMeterEnergy). Resolve it from the
+        # per-model register map; fall back to 57 only if the map is unavailable.
         MODE_REGISTER = 57
+        if self.protocol:
+            reg = self.protocol.get_register_by_key("systemRunMode", FC_READ_HOLDING)
+            if reg is not None:
+                MODE_REGISTER = reg.address
+                _LOGGER.debug("Resolved systemRunMode write register to %d", MODE_REGISTER)
+            else:
+                _LOGGER.warning("systemRunMode not in register map; using fallback register 57")
         
         # MQTT register value to display name (for logging)
         MODE_NAMES = {
             1: "Regular",
             4: "Emergency", 
             3: "Sell",
-            5: "BEM",
+            5: "AC Charging Off EB",
             0: "Battery Priority",
             2: "Grid Priority",
             6: "PV",
@@ -423,7 +473,7 @@ class ESYSunhomeCoordinator(DataUpdateCoordinator):
         
         # Use Unix timestamp as msg_id (like the app does)
         msg_id = int(time.time())
-        
+
         # Get config_id from protocol if available
         config_id = 0
         if self.protocol:
@@ -442,7 +492,7 @@ class ESYSunhomeCoordinator(DataUpdateCoordinator):
                     MODE_NAMES.get(mode_code, "Unknown"), msg_id)
         
         success = await self.publish_command(command)
-        
+
         return success
     
     async def write_register(self, register_address: int, value: int) -> bool:

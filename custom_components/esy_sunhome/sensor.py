@@ -60,6 +60,7 @@ from .const import (
     ATTR_ENERGY_FLOW_BATT,
     ATTR_ENERGY_FLOW_GRID,
     ATTR_ENERGY_FLOW_LOAD,
+    ATTR_SCHEDULE_MODE,
     ATTR_SYSTEM_RUN_MODE,
     ATTR_SYSTEM_RUN_STATUS,
 )
@@ -133,6 +134,7 @@ async def async_setup_entry(
         
         # === SYSTEM INFO ===
         RatedPowerSensor(coordinator=entry.runtime_data),
+        BaseOperatingModeSensor(coordinator=entry.runtime_data),
         SystemModeSensor(coordinator=entry.runtime_data),
         SystemStatusSensor(coordinator=entry.runtime_data),
     ]
@@ -543,8 +545,19 @@ class RatedPowerSensor(EsyPowerSensor):
     _attr_entity_registry_enabled_default = False
 
 
+class BaseOperatingModeSensor(EsySensorBase):
+    """Current base operating mode from MQTT (human-readable name).
+    Always shows the actual mode the inverter is running, even when
+    BEM is active (unlike the Operating Mode select which becomes unavailable).
+    """
+    _attr_translation_key = "baseOperatingMode"
+    _attr_name = "Base Operating Mode"
+    _attr_key = ATTR_SCHEDULE_MODE
+    _attr_icon = "mdi:battery-sync-outline"
+
+
 class SystemModeSensor(EsySensorBase):
-    """System Run Mode."""
+    """System Run Mode (raw register value)."""
     _attr_translation_key = ATTR_SYSTEM_RUN_MODE
     _attr_key = "systemRunMode"
     _attr_icon = "mdi:cog"

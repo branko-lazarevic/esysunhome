@@ -8,7 +8,8 @@ ESY_API_LOGIN_ENDPOINT = "/login?grant_type=app"
 ESY_API_DEVICE_ENDPOINT = "/api/lsydevice/page?current=1&size=10"
 ESY_API_OBTAIN_ENDPOINT = "/api/param/set/obtain?val=3&deviceId="
 ESY_API_MODE_ENDPOINT = "/api/lsypattern/switch"
-ESY_SCHEDULES_ENDPOINT = "/api/lsydevicechargedischarge/info?deviceId="
+ESY_API_SOCSCHEDULES_QUERY_ENDPOINT = "/api/lsydevicechargedischarge/info?deviceId="
+ESY_API_SOCSCHEDULES_SAVE_ENDPOINT = "/api/lsydevicechargedischarge/save"
 
 # Protocol API Endpoints (for dynamic register loading)
 ESY_API_PROTOCOL_LIST = "/sys/protocol/list"

@@ -216,7 +216,7 @@ class DynamicTelemetryParser:
         for segment in segments:
             base_addr = segment.segment_address
             values_bytes = segment.values
-            
+
             # Use segment_type as the function code (3=Holding, 4=Input)
             fc = segment.segment_type
 
@@ -314,7 +314,19 @@ class DynamicTelemetryParser:
         ct2_power = values.get("ct2Power") or 0
         grid_active_power = values.get("gridActivePower") or 0
         energy_flow_grid = values.get("energyFlowGridPower", 0) or values.get("energyFlowGrid", 0) or 0
-        
+
+        # Three-phase models don't expose ct1Power/gridActivePower; their grid
+        # power comes from totalgridActivePower, or the sum of the per-phase
+        # active powers. Same ESY sign convention (negative = importing).
+        total_grid_active = values.get("totalgridActivePower") or 0
+        if not total_grid_active:
+            per_phase = (
+                (values.get("phaseAgridActivePower") or 0)
+                + (values.get("phaseBgridActivePower") or 0)
+                + (values.get("phaseCgridActivePower") or 0)
+            )
+            total_grid_active = per_phase
+
         # Choose the best source based on which has meaningful data
         # Prefer ct1Power if it has significant magnitude, otherwise fall back
         # NOTE: ct2Power when positive is AC-coupled PV, not grid!
@@ -324,6 +336,9 @@ class DynamicTelemetryParser:
         elif abs(grid_active_power) > 10:
             grid_power = grid_active_power
             grid_source = "active"
+        elif abs(total_grid_active) > 10:
+            grid_power = total_grid_active
+            grid_source = "3phase"
         elif abs(energy_flow_grid) > 10:
             grid_power = int(energy_flow_grid)
             grid_source = "flow"
@@ -333,7 +348,7 @@ class DynamicTelemetryParser:
             grid_power = ct2_power
             grid_source = "ct2"
         else:
-            grid_power = ct1_power or grid_active_power or int(energy_flow_grid)
+            grid_power = ct1_power or grid_active_power or total_grid_active or int(energy_flow_grid)
             grid_source = "fallback"
         
         # Negative = importing, Positive = exporting
@@ -479,8 +494,16 @@ class DynamicTelemetryParser:
         result["dailyBattDischarge"] = values.get("dailyBattDischargeEnergy") or values.get("dailyBattDischarge") or 0
         
         # === VOLTAGE & FREQUENCY ===
-        result["gridVoltage"] = values.get("gridVolt") or values.get("gridVoltage") or 0
-        result["gridFrequency"] = values.get("gridFreq") or values.get("gridFrequency") or 0
+        # Single-phase models expose gridVolt/gridFreq; three-phase models expose
+        # per-phase values instead, so fall back to phase A.
+        result["gridVoltage"] = (
+            values.get("gridVolt") or values.get("gridVoltage")
+            or values.get("phaseAgridVoltage") or 0
+        )
+        result["gridFrequency"] = (
+            values.get("gridFreq") or values.get("gridFrequency")
+            or values.get("phaseAgridFrequency") or 0
+        )
         result["batteryVoltage"] = values.get("batteryVoltage") or 0
         result["batteryCurrent"] = values.get("batteryCurrent") or 0
         
@@ -505,7 +528,7 @@ class DynamicTelemetryParser:
             1: "Regular Mode",
             4: "Emergency Mode",
             3: "Electricity Sell Mode",
-            5: "Battery Energy Management",  # Simplified - APK maps to AC Charging Off
+            5: "AC Charging Off Emergency Mode",  # MQTT register 5 value 5 is NOT BEM
             0: "Battery Priority Mode",
             2: "Grid Priority Mode",
             6: "PV Mode",
