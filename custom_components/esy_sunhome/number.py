@@ -1,16 +1,23 @@
 """ESY Sunhome number entities.
 
 Two groups:
-  * Power-control registers (charge/discharge current, export %, SOC limits) —
+  * Power-control registers (charge/discharge power, export %, SOC limits) —
     settable inverter registers, written over the MQTT register-write path,
     with addresses resolved per-model from the dynamic register map.
   * BEM SOC cutoffs (purchase/sale/use) — part of the server-side BEM schedule,
     written via the schedule REST API.
 
 Power-control entities are only created for registers present on the device's
-model. Units: this firmware exposes battery charge/discharge as *current* (A)
-and export limit as a *percentage* of rated power (the mobile app's watt values
-are converted to these by the backend).
+model.
+
+Charge/discharge are exposed as a *percentage* slider for a friendly UX, but —
+matching the ESY mobile app's normal user control — they are written as
+*watts* to the ``batteryChargePower`` / ``batteryDischargePower`` registers
+(the app sends raw watts to these; it is the installer pages that use the
+current/percent registers). The percentage is converted to watts against the
+unit's rated AC power (5kW per phase). The export limit is kept as a
+percentage (it maps to a grid feed-in cap, e.g. 5kW) and written to
+``antiBackflowPowerPercentage``.
 """
 from __future__ import annotations
 
@@ -25,12 +32,21 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .entity import EsySunhomeEntity
+from .const import ESY_PER_PHASE_RATED_W
 from .protocol_api import FC_READ_HOLDING
 
 if TYPE_CHECKING:
     from .coordinator import ESYSunhomeCoordinator
 
 _LOGGER = logging.getLogger(__name__)
+
+# How a control's slider value maps onto the register write:
+#   "raw"           — write the value directly (scaled by the register coeff).
+#   "watt_from_pct" — slider is a 0-100% of rated power; convert to watts
+#                     (pct/100 * rated_w) before writing. native_value reads the
+#                     watt register back and converts to a percentage.
+WRITE_RAW = "raw"
+WRITE_WATT_FROM_PCT = "watt_from_pct"
 
 
 # ---------------------------------------------------------------------------
@@ -49,19 +65,26 @@ class PowerControlDescriptor:
     max_value: float
     step: float
     icon: str
+    write_mode: str = WRITE_RAW
+    slider: bool = True
 
 
 # Candidate controls. Only those whose register exists on the device's model
 # (per the fetched register map) are actually created.
 CONTROLS: list[PowerControlDescriptor] = [
+    # Charge/discharge: % slider UI, written as watts to the app's normal-user
+    # power registers (batteryChargePower / batteryDischargePower).
     PowerControlDescriptor(
-        "batteryChargingCurrent", "battery_charge_current",
-        "Battery Charge Current", "A", 0, 100, 0.1, "mdi:battery-arrow-up",
+        "batteryChargePower", "battery_charge_power_pct",
+        "Battery Charge Power", "%", 0, 100, 1, "mdi:battery-arrow-up",
+        write_mode=WRITE_WATT_FROM_PCT,
     ),
     PowerControlDescriptor(
-        "batteryDischargeCurrent", "battery_discharge_current",
-        "Battery Discharge Current", "A", 0, 100, 0.1, "mdi:battery-arrow-down",
+        "batteryDischargePower", "battery_discharge_power_pct",
+        "Battery Discharge Power", "%", 0, 100, 1, "mdi:battery-arrow-down",
+        write_mode=WRITE_WATT_FROM_PCT,
     ),
+    # Export limit: kept as a percentage (grid feed-in cap, e.g. 5kW @ ~84%).
     PowerControlDescriptor(
         "antiBackflowPowerPercentage", "export_limit_percent",
         "Export Power Limit", "%", 0, 100, 1, "mdi:transmission-tower-export",
@@ -133,8 +156,6 @@ async def async_setup_entry(
 class ESYPowerControlNumber(EsySunhomeEntity, NumberEntity):
     """A settable power-control register exposed as a number entity."""
 
-    _attr_mode = NumberMode.BOX
-
     def __init__(self, coordinator, desc: PowerControlDescriptor, reg) -> None:
         # translation_key must be set before super().__init__ (used for unique_id)
         self._attr_translation_key = desc.translation_key
@@ -147,7 +168,14 @@ class ESYPowerControlNumber(EsySunhomeEntity, NumberEntity):
         self._attr_native_max_value = desc.max_value
         self._attr_native_step = desc.step
         self._attr_icon = desc.icon
+        self._attr_mode = NumberMode.SLIDER if desc.slider else NumberMode.BOX
         self._optimistic: Optional[float] = None
+
+    @property
+    def _rated_watts(self) -> float:
+        """Rated AC power (W) used as the 100% basis for % power controls."""
+        phases = getattr(self.coordinator, "phase_count", 1) or 1
+        return ESY_PER_PHASE_RATED_W * phases
 
     @property
     def native_value(self) -> Optional[float]:
@@ -156,12 +184,30 @@ class ESYPowerControlNumber(EsySunhomeEntity, NumberEntity):
             val = self.coordinator.data.get(self._desc.data_key)
         except Exception:  # noqa: BLE001 - coordinator data may be missing early
             val = None
-        return val if val is not None else self._optimistic
+        if val is None:
+            return self._optimistic
+        if self._desc.write_mode == WRITE_WATT_FROM_PCT:
+            # Telemetry reports watts; present it back as a percentage of rated.
+            rated = self._rated_watts or 1
+            pct = round(val / rated * 100)
+            return max(0, min(100, pct))
+        return val
 
     async def async_set_native_value(self, value: float) -> None:
-        """Write the value to the register (scaled by its coefficient)."""
+        """Write the value to the register.
+
+        For % power controls the slider value is converted to watts against the
+        rated power before scaling by the register coefficient; other controls
+        write their value directly (scaled by the coefficient).
+        """
         coef = self._reg.coefficient or 1
-        raw = int(round(value / coef))
+        if self._desc.write_mode == WRITE_WATT_FROM_PCT:
+            watts = round(value / 100 * self._rated_watts)
+            raw = int(round(watts / coef))
+            detail = f"{value:.0f}% -> {watts}W"
+        else:
+            raw = int(round(value / coef))
+            detail = f"{value}{self._desc.unit}"
         ok = await self.coordinator.write_register(self._reg.address, raw)
         if not ok:
             raise HomeAssistantError(
@@ -170,8 +216,8 @@ class ESYPowerControlNumber(EsySunhomeEntity, NumberEntity):
         self._optimistic = value
         self.async_write_ha_state()
         _LOGGER.info(
-            "Set %s = %s%s (register %d = %d)",
-            self._desc.name, value, self._desc.unit, self._reg.address, raw,
+            "Set %s = %s (register %d = %d)",
+            self._desc.name, detail, self._reg.address, raw,
         )
 
 

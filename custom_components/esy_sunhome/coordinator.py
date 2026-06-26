@@ -20,6 +20,8 @@ from .const import (
     ESY_MQTT_PASSWORD,
     CONF_ENABLE_POLLING,
     DEFAULT_ENABLE_POLLING,
+    CONF_TP_TYPE,
+    DEFAULT_TP_TYPE,
 )
 from .esysunhome import ESYSunhomeAPI, MqttCredentials
 from .protocol import DynamicTelemetryParser, create_parser
@@ -76,7 +78,17 @@ class ESYSunhomeCoordinator(DataUpdateCoordinator):
         
         # Create parser with protocol
         self.parser = create_parser(protocol)
-        
+
+        # Phase type drives the 3-phase telemetry corrections in the parser and
+        # the rated-power basis (5kW per phase) used by the % power controls.
+        tp = config_entry.data.get(CONF_TP_TYPE, DEFAULT_TP_TYPE)
+        try:
+            tp = int(tp)
+        except (TypeError, ValueError):
+            tp = DEFAULT_TP_TYPE
+        self.phase_count = 3 if tp == 3 else 1
+        self.parser.set_tp_type(tp)
+
         # MQTT state
         self._mqtt_client: Optional[aiomqtt.Client] = None
         self._mqtt_task: Optional[asyncio.Task] = None

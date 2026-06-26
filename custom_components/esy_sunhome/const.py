@@ -51,6 +51,11 @@ DEFAULT_TP_TYPE = 1
 DEFAULT_MCU_VERSION = 1049
 DEFAULT_MODE_CHANGE_METHOD = MODE_CHANGE_API
 
+# Rated AC power per phase (W). The ESY hardware is 5kW per phase, so a
+# single-phase unit is 5kW and a 3-phase unit is 15kW. Used as the 100% basis
+# for the battery charge/discharge % controls (watts = pct/100 * rated * phases).
+ESY_PER_PHASE_RATED_W = 5000
+
 # Core Power Sensors
 ATTR_SOC = "batterySoc"
 ATTR_GRID_POWER = "gridPower"
