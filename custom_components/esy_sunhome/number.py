@@ -32,13 +32,19 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .entity import EsySunhomeEntity
-from .const import ESY_PER_PHASE_RATED_W
+from .const import ESY_PER_PHASE_RATED_W, ATTR_SYSTEM_RUN_MODE
 from .protocol_api import FC_READ_HOLDING
 
 if TYPE_CHECKING:
     from .coordinator import ESYSunhomeCoordinator
 
 _LOGGER = logging.getLogger(__name__)
+
+# systemRunMode value for Electricity Sell / Export mode. The inverter latches
+# the power-limit registers on mode entry and ignores live writes while selling,
+# so the power-control sliders are made unavailable in this mode (set the value
+# in another mode, then switch to Sell for it to take effect).
+SELL_MODE_CODE = 3
 
 # How a control's slider value maps onto the register write:
 #   "raw"           — write the value directly (scaled by the register coeff).
@@ -170,6 +176,22 @@ class ESYPowerControlNumber(EsySunhomeEntity, NumberEntity):
         self._attr_icon = desc.icon
         self._attr_mode = NumberMode.SLIDER if desc.slider else NumberMode.BOX
         self._optimistic: Optional[float] = None
+
+    @property
+    def available(self) -> bool:
+        """Unavailable while in Sell/Export mode.
+
+        The inverter only applies these limits when the mode is (re-)entered, so
+        live changes during Sell mode silently do nothing. Greying the control
+        out signals that and points to the set-then-switch workflow.
+        """
+        if not super().available:
+            return False
+        try:
+            mode = self.coordinator.data.get(ATTR_SYSTEM_RUN_MODE)
+        except Exception:  # noqa: BLE001 - coordinator data may be missing early
+            mode = None
+        return mode != SELL_MODE_CODE
 
     @property
     def _rated_watts(self) -> float:
