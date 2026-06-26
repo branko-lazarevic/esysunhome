@@ -144,8 +144,19 @@ class DynamicTelemetryParser:
         """Initialize with optional protocol definition."""
         self.protocol = protocol
         self.payload_parser = PayloadParser()
-        
-        # Key mappings for legacy compatibility
+
+        # Phase type: 1 = single-phase, 3 = three-phase. Set from the config
+        # entry by the coordinator; gates the 3-phase telemetry corrections in
+        # _compute_derived_values (ported from the solaniq_optimizer ESY adapter).
+        self.tp_type = 1
+
+        # Key mappings for legacy compatibility.
+        # Three-phase models expose grid/battery/load under different dataKeys
+        # (the totalPowerOf*InFlow / total*Power keys). Alias them onto the
+        # canonical keys the derive logic already consumes. NOTE:
+        # totalPowerOfGridInFlow is handled explicitly in _compute_derived_values
+        # because its sign convention differs (positive = import) from the
+        # ESY energyFlowGridPower figure, so it is intentionally NOT aliased here.
         self._legacy_key_map = {
             "battTotalSoc": "batterySoc",
             "ct1Power": "gridPower",
@@ -167,7 +178,19 @@ class DynamicTelemetryParser:
             "energyFlowBattPower": "energyFlowBatt",
             "energyFlowGridPower": "energyFlowGrid",
             "energyFlowLoadTotalPower": "energyFlowLoad",
+            # Three-phase aliases (battery in-flow + whole-site load totals).
+            "totalPowerOfBatteryInFlow": "energyFlowBatt",
+            "totalLoadActivePower": "loadRealTimePower",
+            "totalHouseholdLoadPower": "loadActivePower",
         }
+
+    def set_tp_type(self, tp_type: int) -> None:
+        """Set the site phase type (1 = single-phase, 3 = three-phase)."""
+        try:
+            self.tp_type = 3 if int(tp_type) == 3 else 1
+        except (TypeError, ValueError):
+            self.tp_type = 1
+        _LOGGER.info("Parser phase type set to %d-phase", self.tp_type)
 
     def set_protocol(self, protocol: ProtocolDefinition):
         """Set the protocol definition to use."""
@@ -327,63 +350,86 @@ class DynamicTelemetryParser:
             )
             total_grid_active = per_phase
 
-        # Choose the best source based on which has meaningful data
-        # Prefer ct1Power if it has significant magnitude, otherwise fall back
-        # NOTE: ct2Power when positive is AC-coupled PV, not grid!
-        if abs(ct1_power) > 10:
-            grid_power = ct1_power
-            grid_source = "ct1"
-        elif abs(grid_active_power) > 10:
-            grid_power = grid_active_power
-            grid_source = "active"
-        elif abs(total_grid_active) > 10:
-            grid_power = total_grid_active
-            grid_source = "3phase"
-        elif abs(energy_flow_grid) > 10:
-            grid_power = int(energy_flow_grid)
-            grid_source = "flow"
-        elif ct2_power < -10:
-            # Only use ct2Power for grid when it's NEGATIVE (not AC PV)
-            # Negative ct2Power could indicate grid import in some setups
-            grid_power = ct2_power
-            grid_source = "ct2"
+        # grid_power is computed in HA convention here: positive = import,
+        # negative = export. The raw CT/active registers use ESY's convention
+        # (negative = import) and are sign-flipped; the inverter in-flow figure
+        # used by 3-phase models (totalPowerOfGridInFlow) is already +import.
+        if self.tp_type == 3:
+            # ct1Power is a single-phase CT clamp (phase A only); on a 3-phase
+            # unit it under-reports whole-site grid, so exclude it. Prefer the
+            # inverter in-flow figure the ESY app shows (already +import), then
+            # the whole-site active total, then the ESY energy-flow grid figure.
+            flow_inflow = values.get("totalPowerOfGridInFlow")
+            if flow_inflow is not None and abs(flow_inflow) > 10:
+                grid_power = round(flow_inflow)          # already +import
+                grid_source = "flow3p"
+            elif abs(total_grid_active) > 10:
+                grid_power = -total_grid_active          # ESY -import -> +import
+                grid_source = "3phase"
+            elif abs(grid_active_power) > 10:
+                grid_power = -grid_active_power
+                grid_source = "active"
+            elif abs(energy_flow_grid) > 10:
+                grid_power = -int(energy_flow_grid)
+                grid_source = "flow"
+            else:
+                grid_power = -(total_grid_active or grid_active_power or int(energy_flow_grid))
+                grid_source = "fallback3p"
         else:
-            grid_power = ct1_power or grid_active_power or total_grid_active or int(energy_flow_grid)
-            grid_source = "fallback"
-        
-        # Negative = importing, Positive = exporting
-        # For Home Assistant: gridPower positive = import, negative = export
-        # So we need to FLIP the sign from ESY convention
-        result["gridPower"] = -grid_power  # Flip sign for HA convention
-        
-        # Apply sign convention for import/export
-        if grid_power < 0:
-            # ESY negative = importing from grid
-            result["gridImport"] = abs(grid_power)
+            # Single-phase: prefer ct1Power if it has significant magnitude,
+            # otherwise fall back. NOTE: ct2Power when positive is AC-coupled
+            # PV, not grid. Values are ESY raw (negative = import); flip below.
+            if abs(ct1_power) > 10:
+                esy_raw = ct1_power
+                grid_source = "ct1"
+            elif abs(grid_active_power) > 10:
+                esy_raw = grid_active_power
+                grid_source = "active"
+            elif abs(energy_flow_grid) > 10:
+                esy_raw = int(energy_flow_grid)
+                grid_source = "flow"
+            elif ct2_power < -10:
+                # Only use ct2Power for grid when it's NEGATIVE (not AC PV).
+                esy_raw = ct2_power
+                grid_source = "ct2"
+            else:
+                esy_raw = ct1_power or grid_active_power or int(energy_flow_grid)
+                grid_source = "fallback"
+            grid_power = -esy_raw  # Flip ESY convention -> HA (+import)
+
+        # HA convention: gridPower positive = import, negative = export.
+        result["gridPower"] = grid_power
+        if grid_power > 0:
+            result["gridImport"] = grid_power
             result["gridExport"] = 0
             result["gridLine"] = 1
-        elif grid_power > 0:
-            # ESY positive = exporting to grid
+        elif grid_power < 0:
             result["gridImport"] = 0
-            result["gridExport"] = grid_power
+            result["gridExport"] = -grid_power
             result["gridLine"] = 1
         else:
             result["gridImport"] = 0
             result["gridExport"] = 0
             result["gridLine"] = 0
-        
-        _LOGGER.debug("Grid: ct1=%d, ct2=%d, active=%d, flow=%d -> power=%d [%s] (import=%d, export=%d)",
-                     ct1_power, ct2_power, grid_active_power, int(energy_flow_grid),
+
+        _LOGGER.debug("Grid: ct1=%d, ct2=%d, active=%d, total3p=%d, flow=%d -> power=%d [%s] (import=%d, export=%d)",
+                     ct1_power, ct2_power, grid_active_power, total_grid_active, int(energy_flow_grid),
                      grid_power, grid_source, result["gridImport"], result["gridExport"])
         
         # === BATTERY POWER ===
         # Standard convention: Positive = Charging, Negative = Discharging
         
+        # Prefer the inverter's energy-flow battery figure (AC-side — what the
+        # ESY app shows on its battery tile, via energyFlowBattPower /
+        # totalPowerOfBatteryInFlow). The raw batteryPower register is DC-side
+        # and reads higher by the conversion loss (e.g. 2.6kW DC vs 2.2kW AC).
+        # Fall back to batteryPower when the flow figure is absent/zero.
         raw_batt_power = (
-            values.get("batteryPower") or
-            values.get("energyFlowBatt", 0) or 0
+            values.get("energyFlowBattPower") or
+            values.get("energyFlowBatt") or
+            values.get("batteryPower") or 0
         )
-        
+
         # Battery power from inverter is absolute - use batteryStatus to determine direction
         # batteryStatus codes from APK/Modbus register 28:
         # 0: Standby
@@ -461,15 +507,75 @@ class DynamicTelemetryParser:
                      raw_batt_power, battery_status, status_text, batt_power)
         
         # === LOAD POWER ===
+        # Prefer the inverter's energy-flow load figure (what the ESY app shows
+        # on its power-flow screen). On single-phase models this reads 0 and we
+        # fall through to the load registers (unchanged behaviour). Three-phase
+        # models expose the whole-site total under totalLoadActivePower /
+        # totalHouseholdLoadPower (aliased to the load* keys above).
         load_power = (
+            values.get("energyFlowLoadTotalPower") or
+            values.get("energyFlowLoad") or
             values.get("loadRealTimePower") or
             values.get("loadActivePower") or
-            values.get("loadPower") or
-            values.get("energyFlowLoad", 0) or 0
+            values.get("loadPower") or 0
         )
         result["loadPower"] = load_power
         result["loadLine"] = 1 if load_power > 10 else 0
-        
+
+        # === 3-PHASE FLOW NORMALISATION (match ESY app EnergyFlowOptimize.i) ===
+        # The 3-phase per-source registers are gross: pv + grid + battery
+        # overshoot the (accurate) load by a residual, so PV/grid/battery read a
+        # couple hundred watts high vs the app. The app forces conservation by
+        # subtracting the residual EQUALLY from each active flow (pv, grid,
+        # battery), leaving load fixed; we then dump any rounding leftover on the
+        # largest flow so pv + grid + battery == load exactly. Signed convention
+        # here: pv >= 0; grid +import/-export; batt +discharge/-charge.
+        if self.tp_type == 3:
+            pv = float(result.get("pvPower", 0) or 0)
+            grid = float(result.get("gridPower", 0) or 0)
+            batt = float(result.get("batteryExport", 0) or 0) - float(
+                result.get("batteryImport", 0) or 0
+            )
+            load = float(result.get("loadPower", 0) or 0)
+            cur = {"pv": pv, "grid": grid, "batt": batt}
+            active = [k for k, v in cur.items() if abs(v) >= 1]
+            residual = pv + grid + batt - load
+            # Guard: only normalise when we actually have a load reading,
+            # otherwise a missing load would zero out the source flows.
+            if active and load >= 1 and abs(residual) >= 1:
+                d = residual / len(active)
+                for k in active:
+                    nv = cur[k] - d
+                    # Never flip a flow's sign (cap at zero).
+                    if (cur[k] > 0) != (nv > 0) and nv != 0:
+                        nv = 0.0
+                    cur[k] = nv
+                leftover = (cur["pv"] + cur["grid"] + cur["batt"]) - load
+                big = max(active, key=lambda k: abs(cur[k]))
+                cur[big] -= leftover
+
+                result["pvPower"] = max(0, round(cur["pv"]))
+
+                g = round(cur["grid"])
+                result["gridPower"] = g
+                if g > 0:
+                    result["gridImport"], result["gridExport"], result["gridLine"] = g, 0, 1
+                elif g < 0:
+                    result["gridImport"], result["gridExport"], result["gridLine"] = 0, -g, 1
+                else:
+                    result["gridImport"], result["gridExport"], result["gridLine"] = 0, 0, 0
+
+                b = round(cur["batt"])  # +discharge / -charge
+                result["batteryPower"] = abs(b)
+                if b > 0:
+                    result["batteryImport"], result["batteryExport"], result["batteryLine"] = 0, b, 1
+                elif b < 0:
+                    result["batteryImport"], result["batteryExport"], result["batteryLine"] = -b, 0, 2
+                else:
+                    result["batteryImport"], result["batteryExport"], result["batteryLine"] = 0, 0, 0
+                    if result.get("batteryStatus") != 4:
+                        result["batteryStatusText"] = "Standby"
+
         # === BATTERY SOC ===
         # Priority: battTotalSoc (addr 32) > batterySoc (addr 290)
         soc = values.get("battTotalSoc") or values.get("batterySoc") or 0

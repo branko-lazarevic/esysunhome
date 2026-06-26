@@ -198,6 +198,24 @@
             }
         },
         "number": {
+            "battery_charge_power_pct": {
+                "name": "Battery Charge Power"
+            },
+            "battery_discharge_power_pct": {
+                "name": "Battery Discharge Power"
+            },
+            "export_limit_percent": {
+                "name": "Export Power Limit"
+            },
+            "max_output_power_percent": {
+                "name": "Max Output Power"
+            },
+            "on_grid_soc_limit": {
+                "name": "On-Grid SOC Limit"
+            },
+            "off_grid_soc_limit": {
+                "name": "Off-Grid SOC Limit"
+            },
             "soc_purchase_cutoff": {
                 "name": "SOC Purchase Cutoff"
             },
