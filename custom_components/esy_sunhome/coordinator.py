@@ -37,8 +37,8 @@ class TelemetryData:
     """Container for telemetry data with attribute access."""
     
     def __init__(self, data: dict):
-        self._data = data
-        for key, value in data.items():
+        self._data = dict(data)
+        for key, value in self._data.items():
             if not key.startswith("_"):
                 setattr(self, key, value)
     
@@ -404,7 +404,7 @@ class ESYSunhomeCoordinator(DataUpdateCoordinator):
                              data.get("loadPower", 0),
                              data.get("batterySoc", 0))
             else:
-                _LOGGER.warning("Failed to parse telemetry")
+                _LOGGER.debug("No usable telemetry in message")
                 
         except Exception as e:
             _LOGGER.error("Error processing telemetry: %s", e)

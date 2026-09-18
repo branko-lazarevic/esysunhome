@@ -40,9 +40,10 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     return True
 
 
-def _import_aiomqtt():
-    """Import aiomqtt in executor thread to avoid blocking warnings."""
+def _preimport_modules():
+    """Preload modules in the executor before HA requests diagnostics."""
     import aiomqtt  # noqa: F401
+    from . import diagnostics  # noqa: F401
     return True
 
 
@@ -95,8 +96,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up ESY Sunhome from a config entry."""
     _LOGGER.info("Setting up ESY Sunhome integration")
     
-    # Pre-import aiomqtt in executor to avoid blocking call warnings
-    await hass.async_add_executor_job(_import_aiomqtt)
+    # Pre-import diagnostics and aiomqtt in executor to avoid blocking calls
+    await hass.async_add_executor_job(_preimport_modules)
     
     # Now import our modules (coordinator imports aiomqtt, but it's already cached)
     from .esysunhome import ESYSunhomeAPI

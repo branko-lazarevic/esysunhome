@@ -47,7 +47,7 @@ class ModeSelect(EsySunhomeEntity, SelectEntity):
 
     _attr_translation_key = ATTR_SCHEDULE_MODE
     _attr_options = list(BatteryState.modes.values())
-    _attr_current_option = _attr_options[0]
+    _attr_current_option = None
     _attr_name = "Operating Mode"
     _attr_icon = ICON_NORMAL
 
@@ -102,6 +102,7 @@ class ModeSelect(EsySunhomeEntity, SelectEntity):
             mqtt_mode_name = None
 
         if mqtt_mode_name is None:
+            self.async_write_ha_state()
             return
 
         # Only track known base modes

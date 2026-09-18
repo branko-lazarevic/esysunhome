@@ -73,6 +73,8 @@ def test_three_phase_flows_conserve_with_load():
     # pv gen 3000, grid export 900, battery charge 2000, measured load 50.
     r = _decode(3, {
         "pv1Power": 3000,
+        "pv2Power": 0,  # Explicitly measured zero, not missing telemetry.
+        "ct2Power": 0,
         "totalPowerOfGridInFlow": -900,
         "energyFlowBattPower": -2000,
         "batteryStatus": 1,  # charging
@@ -87,6 +89,8 @@ def test_three_phase_flows_conserve_with_load():
 def test_three_phase_missing_load_does_not_zero_flows():
     r = _decode(3, {
         "pv1Power": 3000,
+        "pv2Power": 0,  # Explicitly measured zero, not missing telemetry.
+        "ct2Power": 0,
         "totalPowerOfGridInFlow": -900,
         "energyFlowBattPower": -2000,
         "batteryStatus": 1,

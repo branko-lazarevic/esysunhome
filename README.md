@@ -104,3 +104,8 @@ Switching to Amber for wholesale electricity rates? Use code **QVLA4DT4** for **
 ## License
 
 This project is licensed under the MIT License.
+
+### Partial MQTT telemetry regression checks
+
+See [partial telemetry reporting](docs/partial-telemetry.md) for the reporting
+contract, test commands, upstream/fork version context, and live verification.

@@ -93,7 +93,7 @@ class PayloadParser:
 
         # First 2 bytes are segment count
         segment_count = (payload[0] << 8) | payload[1]
-        _LOGGER.debug("PayloadParser: segment_count = %d, total data = %d bytes", 
+        _LOGGER.debug("PayloadParser: segment_count = %d, total data = %d bytes",
                      segment_count, len(payload))
 
         segments = []
@@ -101,7 +101,11 @@ class PayloadParser:
 
         for i in range(segment_count):
             if pos + 8 > len(payload):
-                _LOGGER.warning("Not enough data for segment %d header", i)
+                _LOGGER.debug(
+                    "Incomplete segment %d header: payload_bytes=%d, offset=%d, "
+                    "available=%d, hex=%s",
+                    i, len(payload), pos, len(payload) - pos, payload[:64].hex(),
+                )
                 break
 
             # Each segment header is 8 bytes (4 x 16-bit values)
@@ -114,8 +118,13 @@ class PayloadParser:
             # Values length is params_num * 2 (each param is 16 bits)
             values_len = params_num * 2
             if pos + values_len > len(payload):
-                _LOGGER.warning("Segment %d: not enough data (need %d, have %d)",
-                               i, values_len, len(payload) - pos)
+                _LOGGER.debug(
+                    "Segment %d: not enough data (need %d, have %d); "
+                    "payload_bytes=%d, seg_id=%d, seg_type=%d, seg_addr=%d, "
+                    "params_num=%d, hex=%s",
+                    i, values_len, len(payload) - pos, len(payload),
+                    seg_id, seg_type, seg_addr, params_num, payload[:64].hex(),
+                )
                 break
 
             seg_values = payload[pos:pos + values_len]
@@ -159,7 +168,6 @@ class DynamicTelemetryParser:
         # ESY energyFlowGridPower figure, so it is intentionally NOT aliased here.
         self._legacy_key_map = {
             "battTotalSoc": "batterySoc",
-            "ct1Power": "gridPower",
             "loadRealTimePower": "loadPower",
             "gridFreq": "gridFrequency",
             "gridVolt": "gridVoltage",
@@ -201,7 +209,7 @@ class DynamicTelemetryParser:
     def parse_message(self, data: bytes) -> Optional[Dict[str, Any]]:
         """Parse binary telemetry message into dict."""
         if not data or len(data) < HEADER_SIZE:
-            _LOGGER.warning("Message too short: %d bytes", len(data) if data else 0)
+            _LOGGER.debug("Message too short: %d bytes", len(data) if data else 0)
             return None
 
         # Parse header
@@ -216,12 +224,19 @@ class DynamicTelemetryParser:
         # Extract and parse payload
         payload = data[HEADER_SIZE:HEADER_SIZE + header.data_length]
         segments = self.payload_parser.parse(payload)
-        
+
         _LOGGER.debug("Parsed %d segments", len(segments))
+
+        if not segments:
+            _LOGGER.debug("Ignoring message with 0 parsed segments (funCode=%d)", header.fun_code)
+            return None
 
         # Build telemetry data
         result = self._build_telemetry_data(segments, header)
-        
+        if not any(not key.startswith("_") for key in result):
+            _LOGGER.debug("No known telemetry registers in message")
+            return None
+
         # Map to legacy entity names and compute derived values
         result = self._compute_derived_values(result)
 
@@ -230,7 +245,7 @@ class DynamicTelemetryParser:
     def _build_telemetry_data(self, segments: List[ParamSegment], header: MsgHeader) -> Dict[str, Any]:
         """Build telemetry dict from segments using dynamic protocol."""
         all_values: Dict[str, Any] = {}
-        
+
         all_values["_configId"] = header.config_id
         all_values["_pageIndex"] = header.page_index
         all_values["_funCode"] = header.fun_code
@@ -251,32 +266,32 @@ class DynamicTelemetryParser:
                     break
 
                 raw_unsigned = (values_bytes[offset] << 8) | values_bytes[offset + 1]
-                
+
                 # Try to find register in protocol
                 reg = None
                 if self.protocol:
                     reg = self.protocol.get_register(abs_addr, fc)
-                
+
                 if reg:
                     # Apply data type
                     if reg.data_type == DATA_TYPE_SIGNED and raw_unsigned > 32767:
                         raw_value = raw_unsigned - 65536
                     else:
                         raw_value = raw_unsigned
-                    
+
                     # Apply coefficient
                     if reg.coefficient != 1:
                         value = round(raw_value * reg.coefficient, 3)
                     else:
                         value = raw_value
-                    
+
                     # Store with original key
                     all_values[reg.data_key] = value
-                    
+
                     # Also store with legacy key if applicable
                     if reg.data_key in self._legacy_key_map:
                         all_values[self._legacy_key_map[reg.data_key]] = value
-                    
+
                     _LOGGER.debug("%s = %s (raw=%d, coeff=%s, addr=%d)",
                                  reg.data_key, value, raw_value, reg.coefficient, abs_addr)
                 else:
@@ -288,239 +303,148 @@ class DynamicTelemetryParser:
 
     def _compute_derived_values(self, values: Dict[str, Any]) -> Dict[str, Any]:
         """Compute derived values for compatibility."""
+        # None is not a measurement. Keep genuine zero values.
+        values = {key: value for key, value in values.items() if value is not None}
         result = dict(values)
-        
-        # === PV POWER ===
-        # DC PV: pv1Power + pv2Power (panels connected to inverter DC inputs)
-        # AC PV: ct2Power when positive (AC-coupled solar, measured by CT2)
-        # Total PV = DC PV + AC PV
-        
-        pv1 = values.get("pv1Power", 0) or 0
-        pv2 = values.get("pv2Power", 0) or 0
-        dc_pv_power = pv1 + pv2
-        
-        # ct2Power measures AC-coupled solar when positive
-        # (when negative, it's consumption, not generation)
-        ct2_power = values.get("ct2Power", 0) or 0
-        ac_pv_power = max(0, ct2_power)  # Only count positive values as AC PV
-        
-        # energyFlowPvTotalPower is the app's display value - may include both
-        energy_flow_pv = values.get("energyFlowPvTotalPower", 0) or 0
-        
-        # Calculate total PV power
-        # If we have DC PV, add AC PV to get total
-        # Otherwise fall back to energyFlowPvTotalPower
-        if dc_pv_power > 0 or ac_pv_power > 0:
-            total_pv_power = dc_pv_power + ac_pv_power
-        else:
-            total_pv_power = int(energy_flow_pv)
-        
-        result["pvPower"] = total_pv_power
-        result["dcPvPower"] = dc_pv_power  # ESY PV (DC-coupled)
-        result["acPvPower"] = ac_pv_power  # AC PV (AC-coupled from CT2)
-        result["pv1Power"] = pv1
-        result["pv2Power"] = pv2
-        result["pvLine"] = 1 if total_pv_power > 10 else 0
-        
-        _LOGGER.debug("PV: pv1=%d, pv2=%d (DC=%d), ct2=%d (AC=%d), energyFlow=%d -> total=%d",
-                     pv1, pv2, dc_pv_power, ct2_power, ac_pv_power, int(energy_flow_pv), total_pv_power)
-        
-        # === GRID POWER ===
-        # Different inverter setups use different sensors for grid power:
-        # - Some use ct1Power (with sign)
-        # - Some use ct2Power (but positive ct2Power = AC PV, not grid!)
-        # - gridActivePower is often accurate but sometimes has scaling issues
-        # - energyFlowGridPower matches the app display
-        # Negative values = importing FROM grid
-        
-        ct1_power = values.get("ct1Power") or 0
-        ct2_power = values.get("ct2Power") or 0
-        grid_active_power = values.get("gridActivePower") or 0
-        energy_flow_grid = values.get("energyFlowGridPower", 0) or values.get("energyFlowGrid", 0) or 0
 
-        # Three-phase models don't expose ct1Power/gridActivePower; their grid
-        # power comes from totalgridActivePower, or the sum of the per-phase
-        # active powers. Same ESY sign convention (negative = importing).
-        total_grid_active = values.get("totalgridActivePower") or 0
-        if not total_grid_active:
-            per_phase = (
-                (values.get("phaseAgridActivePower") or 0)
-                + (values.get("phaseBgridActivePower") or 0)
-                + (values.get("phaseCgridActivePower") or 0)
-            )
-            total_grid_active = per_phase
+        # Only combine inputs present in this packet. A register absent from
+        # the device's protocol is not an input; a defined but absent register
+        # is missing telemetry and must not be treated as zero.
+        pv_keys = ("pv1Power", "pv2Power", "ct2Power")
+        if self.protocol:
+            defined = {reg.data_key for reg in self.protocol.input_registers.values()}
+            defined.update(reg.data_key for reg in self.protocol.holding_registers.values())
+            pv_keys = tuple(key for key in pv_keys if key in defined or key in values)
+        dc_keys = tuple(key for key in pv_keys if key != "ct2Power")
+        if dc_keys and all(key in values for key in dc_keys):
+            result["dcPvPower"] = sum(values[key] for key in dc_keys)
+        if "ct2Power" in values:
+            result["acPvPower"] = max(0, values["ct2Power"])
+        if pv_keys and all(key in values for key in pv_keys):
+            total = sum(values[key] for key in dc_keys) + max(0, values.get("ct2Power", 0))
+            result["pvPower"] = total or values.get("energyFlowPvTotalPower", 0)
+        elif "energyFlowPvTotalPower" in values:
+            result["pvPower"] = values["energyFlowPvTotalPower"]
+        if "pvPower" in result:
+            result["pvLine"] = int(result["pvPower"] > 10)
 
-        # grid_power is computed in HA convention here: positive = import,
-        # negative = export. The raw CT/active registers use ESY's convention
-        # (negative = import) and are sign-flipped; the inverter in-flow figure
-        # used by 3-phase models (totalPowerOfGridInFlow) is already +import.
+        # Grid candidates are complete measurements, in HA sign convention
+        # (+import). Preserve the existing significant-reading preference,
+        # but fall back only to an observed reading, including a genuine zero.
+        candidates = []
         if self.tp_type == 3:
-            # ct1Power is a single-phase CT clamp (phase A only); on a 3-phase
-            # unit it under-reports whole-site grid, so exclude it. Prefer the
-            # inverter in-flow figure the ESY app shows (already +import), then
-            # the whole-site active total, then the ESY energy-flow grid figure.
-            flow_inflow = values.get("totalPowerOfGridInFlow")
-            if flow_inflow is not None and abs(flow_inflow) > 10:
-                grid_power = round(flow_inflow)          # already +import
-                grid_source = "flow3p"
-            elif abs(total_grid_active) > 10:
-                grid_power = -total_grid_active          # ESY -import -> +import
-                grid_source = "3phase"
-            elif abs(grid_active_power) > 10:
-                grid_power = -grid_active_power
-                grid_source = "active"
-            elif abs(energy_flow_grid) > 10:
-                grid_power = -int(energy_flow_grid)
-                grid_source = "flow"
+            if "totalPowerOfGridInFlow" in values:
+                candidates.append(round(values["totalPowerOfGridInFlow"]))
+            if "totalgridActivePower" in values:
+                candidates.append(-values["totalgridActivePower"])
             else:
-                grid_power = -(total_grid_active or grid_active_power or int(energy_flow_grid))
-                grid_source = "fallback3p"
-        else:
-            # Single-phase: prefer ct1Power if it has significant magnitude,
-            # otherwise fall back. NOTE: ct2Power when positive is AC-coupled
-            # PV, not grid. Values are ESY raw (negative = import); flip below.
-            if abs(ct1_power) > 10:
-                esy_raw = ct1_power
-                grid_source = "ct1"
-            elif abs(grid_active_power) > 10:
-                esy_raw = grid_active_power
-                grid_source = "active"
-            elif abs(energy_flow_grid) > 10:
-                esy_raw = int(energy_flow_grid)
-                grid_source = "flow"
-            elif ct2_power < -10:
-                # Only use ct2Power for grid when it's NEGATIVE (not AC PV).
-                esy_raw = ct2_power
-                grid_source = "ct2"
-            else:
-                esy_raw = ct1_power or grid_active_power or int(energy_flow_grid)
-                grid_source = "fallback"
-            grid_power = -esy_raw  # Flip ESY convention -> HA (+import)
+                phases = ("phaseAgridActivePower", "phaseBgridActivePower", "phaseCgridActivePower")
+                if all(key in values for key in phases):
+                    candidates.append(-sum(values[key] for key in phases))
+        elif "ct1Power" in values:
+            candidates.append(-values["ct1Power"])
+        for key in ("gridActivePower", "energyFlowGridPower", "energyFlowGrid"):
+            if key in values:
+                candidates.append(-values[key])
+        # A positive CT2 measures AC solar, so cannot imply zero grid power.
+        if self.tp_type == 1 and values.get("ct2Power", 0) < -10:
+            candidates.append(-values["ct2Power"])
+        if candidates:
+            grid_power = next((power for power in candidates if abs(power) > 10), candidates[0])
+            result["gridPower"] = grid_power
+            result["gridImport"] = max(0, grid_power)
+            result["gridExport"] = max(0, -grid_power)
+            result["gridLine"] = int(grid_power != 0)
 
-        # HA convention: gridPower positive = import, negative = export.
-        result["gridPower"] = grid_power
-        if grid_power > 0:
-            result["gridImport"] = grid_power
-            result["gridExport"] = 0
-            result["gridLine"] = 1
-        elif grid_power < 0:
-            result["gridImport"] = 0
-            result["gridExport"] = -grid_power
-            result["gridLine"] = 1
-        else:
-            result["gridImport"] = 0
-            result["gridExport"] = 0
-            result["gridLine"] = 0
-
-        _LOGGER.debug("Grid: ct1=%d, ct2=%d, active=%d, total3p=%d, flow=%d -> power=%d [%s] (import=%d, export=%d)",
-                     ct1_power, ct2_power, grid_active_power, total_grid_active, int(energy_flow_grid),
-                     grid_power, grid_source, result["gridImport"], result["gridExport"])
-        
         # === BATTERY POWER ===
         # Standard convention: Positive = Charging, Negative = Discharging
-        
-        # Prefer the inverter's energy-flow battery figure (AC-side — what the
-        # ESY app shows on its battery tile, via energyFlowBattPower /
-        # totalPowerOfBatteryInFlow). The raw batteryPower register is DC-side
-        # and reads higher by the conversion loss (e.g. 2.6kW DC vs 2.2kW AC).
-        # Fall back to batteryPower when the flow figure is absent/zero.
-        raw_batt_power = (
-            values.get("energyFlowBattPower") or
-            values.get("energyFlowBatt") or
-            values.get("batteryPower") or 0
-        )
+        if any(k in values for k in ("energyFlowBattPower", "energyFlowBatt", "batteryPower")):
+            raw_batt_power = (
+                values.get("energyFlowBattPower") or
+                values.get("energyFlowBatt") or
+                values.get("batteryPower") or 0
+            )
 
-        # Battery power from inverter is absolute - use batteryStatus to determine direction
-        # batteryStatus codes from APK/Modbus register 28:
-        # 0: Standby
-        # 1: Charging
-        # 2: Charge Topping (charging)
-        # 3: Float Charge (charging)
-        # 4: Full
-        # 5: Discharging
-        # 6+: Charging
-        battery_status = values.get("batteryStatus", 0) or 0
-        
-        # Status text mapping
-        BATTERY_STATUS_TEXT = {
-            0: "Standby",
-            1: "Charging",
-            2: "Charge Topping",
-            3: "Float Charge",
-            4: "Full",
-            5: "Discharging",
-        }
-        
-        # Determine charge/discharge based on status code
-        if battery_status == 5:
-            # Discharging
-            is_charging = False
-            is_discharging = True
-            status_text = "Discharging"
-        elif battery_status in (1, 2, 3, 6):
-            # Charging (various charging states)
-            is_charging = True
-            is_discharging = False
-            status_text = BATTERY_STATUS_TEXT.get(battery_status, "Charging")
-        elif battery_status == 4:
-            # Full - not actively charging/discharging
-            is_charging = False
-            is_discharging = False
-            status_text = "Full"
-        else:
-            # 0 or unknown - standby/idle
-            is_charging = False
-            is_discharging = False
-            status_text = "Standby"
-        
-        # Make battery power absolute since direction comes from status
-        batt_power = abs(raw_batt_power)
-        
-        # If power is 0 but status says full, keep full status
-        # If power is 0 and status is not 4 (full), show as standby
-        if batt_power == 0 and battery_status != 4:
-            is_charging = False
-            is_discharging = False
-            status_text = "Standby"
-        
-        result["batteryPower"] = batt_power
-        result["batteryStatus"] = battery_status
-        
-        # Directional battery power for HA sensors
-        if is_discharging and batt_power > 0:
-            result["batteryImport"] = 0
-            result["batteryExport"] = batt_power  # Discharging = export (from battery)
-            result["batteryStatusText"] = status_text
-            result["batteryLine"] = 1
-        elif is_charging and batt_power > 0:
-            result["batteryImport"] = batt_power  # Charging = import (into battery)
-            result["batteryExport"] = 0
-            result["batteryStatusText"] = status_text
-            result["batteryLine"] = 2
-        else:
-            result["batteryImport"] = 0
-            result["batteryExport"] = 0
-            result["batteryStatusText"] = status_text
-            result["batteryLine"] = 0
-        
-        _LOGGER.debug("Battery: raw=%d, status=%d (%s), power=%d", 
-                     raw_batt_power, battery_status, status_text, batt_power)
-        
+            result["batteryPower"] = abs(raw_batt_power)
+            if "batteryStatus" in values:
+                battery_status = values["batteryStatus"]
+
+                # Status text mapping
+                BATTERY_STATUS_TEXT = {
+                    0: "Standby",
+                    1: "Charging",
+                    2: "Charge Topping",
+                    3: "Float Charge",
+                    4: "Full",
+                    5: "Discharging",
+                }
+
+                # Determine charge/discharge based on status code
+                if battery_status == 5:
+                    # Discharging
+                    is_charging = False
+                    is_discharging = True
+                    status_text = "Discharging"
+                elif battery_status in (1, 2, 3, 6):
+                    # Charging (various charging states)
+                    is_charging = True
+                    is_discharging = False
+                    status_text = BATTERY_STATUS_TEXT.get(battery_status, "Charging")
+                elif battery_status == 4:
+                    # Full - not actively charging/discharging
+                    is_charging = False
+                    is_discharging = False
+                    status_text = "Full"
+                else:
+                    # 0 or unknown - standby/idle
+                    is_charging = False
+                    is_discharging = False
+                    status_text = "Standby"
+
+                # Make battery power absolute since direction comes from status
+                batt_power = abs(raw_batt_power)
+
+                # If power is 0 but status says full, keep full status
+                # If power is 0 and status is not 4 (full), show as standby
+                if batt_power == 0 and battery_status != 4:
+                    is_charging = False
+                    is_discharging = False
+                    status_text = "Standby"
+
+                result["batteryPower"] = batt_power
+                result["batteryStatus"] = battery_status
+
+                # Directional battery power for HA sensors
+                if is_discharging and batt_power > 0:
+                    result["batteryImport"] = 0
+                    result["batteryExport"] = batt_power  # Discharging = export (from battery)
+                    result["batteryStatusText"] = status_text
+                    result["batteryLine"] = 1
+                elif is_charging and batt_power > 0:
+                    result["batteryImport"] = batt_power  # Charging = import (into battery)
+                    result["batteryExport"] = 0
+                    result["batteryStatusText"] = status_text
+                    result["batteryLine"] = 2
+                else:
+                    result["batteryImport"] = 0
+                    result["batteryExport"] = 0
+                    result["batteryStatusText"] = status_text
+                    result["batteryLine"] = 0
+
+                _LOGGER.debug("Battery: raw=%d, status=%d (%s), power=%d",
+                             raw_batt_power, battery_status, status_text, batt_power)
+
         # === LOAD POWER ===
-        # Prefer the inverter's energy-flow load figure (what the ESY app shows
-        # on its power-flow screen). On single-phase models this reads 0 and we
-        # fall through to the load registers (unchanged behaviour). Three-phase
-        # models expose the whole-site total under totalLoadActivePower /
-        # totalHouseholdLoadPower (aliased to the load* keys above).
-        load_power = (
-            values.get("energyFlowLoadTotalPower") or
-            values.get("energyFlowLoad") or
-            values.get("loadRealTimePower") or
-            values.get("loadActivePower") or
-            values.get("loadPower") or 0
-        )
-        result["loadPower"] = load_power
-        result["loadLine"] = 1 if load_power > 10 else 0
+        if any(k in values for k in ("energyFlowLoadTotalPower", "energyFlowLoad", "loadRealTimePower", "loadActivePower", "loadPower")):
+            load_power = (
+                values.get("energyFlowLoadTotalPower") or
+                values.get("energyFlowLoad") or
+                values.get("loadRealTimePower") or
+                values.get("loadActivePower") or
+                values.get("loadPower") or 0
+            )
+            result["loadPower"] = load_power
+            result["loadLine"] = 1 if load_power > 10 else 0
 
         # === 3-PHASE FLOW NORMALISATION (match ESY app EnergyFlowOptimize.i) ===
         # The 3-phase per-source registers are gross: pv + grid + battery
@@ -530,7 +454,9 @@ class DynamicTelemetryParser:
         # battery), leaving load fixed; we then dump any rounding leftover on the
         # largest flow so pv + grid + battery == load exactly. Signed convention
         # here: pv >= 0; grid +import/-export; batt +discharge/-charge.
-        if self.tp_type == 3:
+        if self.tp_type == 3 and all(
+            key in result for key in ("pvPower", "gridPower", "batteryImport", "batteryExport", "loadPower")
+        ):
             pv = float(result.get("pvPower", 0) or 0)
             grid = float(result.get("gridPower", 0) or 0)
             batt = float(result.get("batteryExport", 0) or 0) - float(
@@ -576,117 +502,55 @@ class DynamicTelemetryParser:
                     if result.get("batteryStatus") != 4:
                         result["batteryStatusText"] = "Standby"
 
-        # === BATTERY SOC ===
-        # Priority: battTotalSoc (addr 32) > batterySoc (addr 290)
-        soc = values.get("battTotalSoc") or values.get("batterySoc") or 0
-        if 0 <= soc <= 100:
-            result["batterySoc"] = soc
-        else:
-            result["batterySoc"] = 0
-        
-        # === BATTERY SOH ===
-        result["batterySoh"] = values.get("batterySoh", 0) or 0
-        
-        # === TEMPERATURES ===
-        result["inverterTemp"] = values.get("invTemperature") or values.get("inverterTemp") or 0
-        result["dcdcTemperature"] = values.get("dcdcTemperature") or 0
-        
-        # === ENERGY STATISTICS ===
-        result["dailyPowerGeneration"] = values.get("dailyEnergyGeneration") or values.get("dailyPowerGeneration") or 0
-        result["totalPowerGeneration"] = values.get("totalEnergyGeneration") or values.get("totalPowerGeneration") or 0
-        result["dailyConsumption"] = values.get("dailyPowerConsumption") or values.get("dailyConsumption") or 0
-        result["dailyGridExport"] = values.get("dailyGridConnectionPower") or values.get("dailyGridExport") or 0
-        result["dailyBattCharge"] = values.get("dailyBattChargeEnergy") or values.get("dailyBattCharge") or 0
-        result["dailyBattDischarge"] = values.get("dailyBattDischargeEnergy") or values.get("dailyBattDischarge") or 0
-        
-        # === VOLTAGE & FREQUENCY ===
-        # Single-phase models expose gridVolt/gridFreq; three-phase models expose
-        # per-phase values instead, so fall back to phase A.
-        result["gridVoltage"] = (
-            values.get("gridVolt") or values.get("gridVoltage")
-            or values.get("phaseAgridVoltage") or 0
-        )
-        result["gridFrequency"] = (
-            values.get("gridFreq") or values.get("gridFrequency")
-            or values.get("phaseAgridFrequency") or 0
-        )
-        result["batteryVoltage"] = values.get("batteryVoltage") or 0
-        result["batteryCurrent"] = values.get("batteryCurrent") or 0
-        
-        # === SYSTEM MODE ===
-        # Mode mapping from APK analysis (EnergyFlowOptimize.e() + setModeType())
-        # The MQTT systemRunMode value maps to display code, then to display name:
-        #
-        # MQTT systemRunMode -> display code -> Mode Name
-        # 1 -> 1 -> Regular Mode
-        # 4 -> 2 -> Emergency Mode
-        # 3 -> 3 -> Electricity Sell Mode
-        # 5 -> 8 -> AC Charging Off Emergency (but BEM in our simplified mapping)
-        # 0 -> 6 -> Battery Priority Mode
-        # 2 -> 7 -> Grid Priority Mode
-        # 6 -> 9 -> PV Mode
-        # 7 -> 10 -> Forced Off Grid Mode
-        #
-        # Register 5 (systemRunMode) = The ACTUAL mode the system is running in
-        # Register 6 (systemRunStatus) = Run STATUS indicator (NOT the mode!)
-        #
-        MODE_NAMES = {
-            1: "Regular Mode",
-            4: "Emergency Mode",
-            3: "Electricity Sell Mode",
-            5: "AC Charging Off Emergency Mode",  # MQTT register 5 value 5 is NOT BEM
-            0: "Battery Priority Mode",
-            2: "Grid Priority Mode",
-            6: "PV Mode",
-            7: "Forced Off Grid Mode",
+        # Aliases use presence, not truthiness: zero SOC/energy/temperature
+        # is valid. Never manufacture missing numeric sensor values.
+        aliases = {
+            "batterySoc": ("battTotalSoc", "batterySoc"),
+            "inverterTemp": ("invTemperature", "inverterTemp"),
+            "dailyPowerGeneration": ("dailyEnergyGeneration", "dailyPowerGeneration"),
+            "totalPowerGeneration": ("totalEnergyGeneration", "totalPowerGeneration"),
+            "dailyConsumption": ("dailyPowerConsumption", "dailyConsumption"),
+            "dailyGridExport": ("dailyGridConnectionPower", "dailyGridExport"),
+            "dailyBattCharge": ("dailyBattChargeEnergy", "dailyBattCharge"),
+            "dailyBattDischarge": ("dailyBattDischargeEnergy", "dailyBattDischarge"),
+            "gridVoltage": ("gridVolt", "gridVoltage", "phaseAgridVoltage"),
+            "gridFrequency": ("gridFreq", "gridFrequency", "phaseAgridFrequency"),
+            "energyFlowPv": ("energyFlowPvTotalPower", "energyFlowPv"),
+            "energyFlowBatt": ("energyFlowBattPower", "energyFlowBatt"),
+            "energyFlowGrid": ("energyFlowGridPower", "energyFlowGrid"),
+            "energyFlowLoad": ("energyFlowLoadTotalPower", "energyFlowLoad"),
         }
-        
-        # systemRunMode (register 5) is the ACTUAL mode
-        running_mode = values.get("systemRunMode") or 1
-        
-        # systemRunStatus (register 6) is NOT the mode - it's a status indicator
-        run_status = values.get("systemRunStatus") or 0
-        
-        # The display mode should be the running mode
-        display_mode = running_mode
-        
-        result["systemRunMode"] = running_mode  # The actual mode
-        result["systemRunStatus"] = run_status  # Run status (not mode)
-        result["patternMode"] = running_mode    # For backwards compatibility
-        result["code"] = MODE_NAMES.get(display_mode, f"Unknown Mode ({display_mode})")
-        result["_modeCode"] = display_mode
-        result["_runningModeCode"] = running_mode
-        
-        _LOGGER.debug("Mode: systemRunMode=%d, systemRunStatus=%d, display='%s'", 
-                     running_mode, run_status, result["code"])
-        
-        # === RATED POWER ===
-        rated = values.get("ratedPower") or 0
-        # Handle coefficient if needed
-        if 10 < rated < 200:  # Likely in hundreds of watts
-            result["ratedPower"] = rated * 100
-        else:
-            result["ratedPower"] = rated
-        
-        # === METER/CT POWER ===
-        result["ct1Power"] = values.get("ct1Power") or 0
-        result["ct2Power"] = values.get("ct2Power") or 0
-        result["meterPower"] = values.get("meterPower") or 0
-        
-        # === ENERGY FLOW (app display) ===
-        result["energyFlowPv"] = values.get("energyFlowPvTotalPower") or values.get("energyFlowPv") or 0
-        result["energyFlowBatt"] = values.get("energyFlowBattPower") or values.get("energyFlowBatt") or 0
-        result["energyFlowGrid"] = values.get("energyFlowGridPower") or values.get("energyFlowGrid") or 0
-        result["energyFlowLoad"] = values.get("energyFlowLoadTotalPower") or values.get("energyFlowLoad") or 0
-        
-        _LOGGER.debug("=== PARSED VALUES ===")
-        _LOGGER.debug("PV: %dW (pv1=%d, pv2=%d)", result["pvPower"], pv1, pv2)
-        _LOGGER.debug("Grid: %dW (import=%d, export=%d)", result["gridPower"], result["gridImport"], result["gridExport"])
-        _LOGGER.debug("Battery: %dW (SOC=%d%%, status=%s)", result["batteryPower"], result["batterySoc"], result["batteryStatusText"])
-        _LOGGER.debug("Load: %dW", result["loadPower"])
-        _LOGGER.debug("Daily Gen: %.2f kWh", result["dailyPowerGeneration"])
-        _LOGGER.debug("Mode: %s (code=%d)", result["code"], result.get("_modeCode", 0))
-        
+        for target, sources in aliases.items():
+            for source in sources:
+                if source in values:
+                    result[target] = values[source]
+                    break
+        if "batterySoc" in result and not 0 <= result["batterySoc"] <= 100:
+            del result["batterySoc"]
+
+        # Run status is not operating mode. In particular, a status-only
+        # packet must not reset the select to Regular Mode; mode 0 is valid.
+        if "systemRunMode" in values:
+            mode_names = {
+                1: "Regular Mode",
+                4: "Emergency Mode",
+                3: "Electricity Sell Mode",
+                5: "AC Charging Off Emergency Mode",
+                0: "Battery Priority Mode",
+                2: "Grid Priority Mode",
+                6: "PV Mode",
+                7: "Forced Off Grid Mode",
+            }
+            mode = values["systemRunMode"]
+            result["patternMode"] = mode
+            result["code"] = mode_names.get(mode, f"Unknown Mode ({mode})")
+            result["_modeCode"] = mode
+            result["_runningModeCode"] = mode
+
+        if "ratedPower" in values:
+            rated = values["ratedPower"]
+            result["ratedPower"] = rated * 100 if 10 < rated < 200 else rated
+
         return result
 
 

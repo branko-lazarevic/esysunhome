@@ -12,13 +12,14 @@ This provides debug info including:
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from homeassistant.components.diagnostics import async_redact_data
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
-from .coordinator import EsySunhomeCoordinator
+if TYPE_CHECKING:
+    from .coordinator import ESYSunhomeCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -82,7 +83,7 @@ async def async_get_config_entry_diagnostics(
     hass: HomeAssistant, entry: ConfigEntry
 ) -> dict[str, Any]:
     """Return diagnostics for a config entry."""
-    coordinator: EsySunhomeCoordinator = entry.runtime_data
+    coordinator: ESYSunhomeCoordinator = entry.runtime_data
     
     # Get raw and parsed data
     raw_values = {}
@@ -90,9 +91,8 @@ async def async_get_config_entry_diagnostics(
     mqtt_status = {}
     
     if coordinator.data:
-        # The coordinator.data is the parsed BatteryState
-        if hasattr(coordinator.data, 'data'):
-            parsed_values = dict(coordinator.data.data)
+        # The coordinator publishes TelemetryData, not the legacy BatteryState.
+        parsed_values = dict(coordinator.data._data)
     
     # Get raw MQTT values if available
     if hasattr(coordinator, '_last_raw_values'):
