@@ -12,13 +12,14 @@ This provides debug info including:
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from homeassistant.components.diagnostics import async_redact_data
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
-from .coordinator import EsySunhomeCoordinator
+if TYPE_CHECKING:
+    from .coordinator import EsySunhomeCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
