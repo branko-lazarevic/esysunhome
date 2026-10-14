@@ -93,3 +93,16 @@ def test_three_phase_missing_load_does_not_zero_flows():
     })
     assert r["pvPower"] == 3000
     assert r["gridPower"] == -900
+
+
+def test_three_phase_partial_packet_without_pv_is_not_normalised():
+    # A partial packet with grid + load but no PV fields must not crash
+    # (pv1/pv2 unbound in the debug summary) or push the residual onto grid.
+    r = _decode(3, {
+        "totalPowerOfGridInFlow": 1500,
+        "energyFlowLoadTotalPower": 800,
+        "batteryStatus": 0,
+    })
+    assert "pvPower" not in r
+    assert r["gridPower"] == 1500
+    assert r["loadPower"] == 800
