@@ -298,6 +298,8 @@ class DynamicTelemetryParser:
         # DC PV: pv1Power + pv2Power (panels connected to inverter DC inputs)
         # AC PV: ct2Power when positive (AC-coupled solar, measured by CT2)
         # Total PV = DC PV + AC PV
+        # Defaults keep the debug summary below safe when a partial packet has no PV fields
+        pv1 = pv2 = 0
         if any(k in values for k in ("pv1Power", "pv2Power", "energyFlowPvTotalPower", "ct2Power")):
             pv1 = values.get("pv1Power", 0) or 0
             pv2 = values.get("pv2Power", 0) or 0
@@ -516,7 +518,11 @@ class DynamicTelemetryParser:
         # battery), leaving load fixed; we then dump any rounding leftover on the
         # largest flow so pv + grid + battery == load exactly. Signed convention
         # here: pv >= 0; grid +import/-export; batt +discharge/-charge.
-        if self.tp_type == 3:
+        # Skip partial packets: a missing flow would read as 0 and the residual
+        # would be pushed onto the flows that are present.
+        if self.tp_type == 3 and all(
+            k in result for k in ("pvPower", "gridPower", "batteryPower", "loadPower")
+        ):
             pv = float(result.get("pvPower", 0) or 0)
             grid = float(result.get("gridPower", 0) or 0)
             batt = float(result.get("batteryExport", 0) or 0) - float(
