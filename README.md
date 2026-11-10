@@ -103,4 +103,9 @@ Switching to Amber for wholesale electricity rates? Use code **QVLA4DT4** for **
 
 ## License
 
-This project is licensed under the MIT License.
+This project is licensed under the [PolyForm Noncommercial License 1.0.0](LICENSE.md).
+
+- **Free for personal, hobby, educational and other noncommercial use**, including running it on your own Home Assistant to control your own battery.
+- **Commercial use is not permitted** without a separate licence. That includes bundling, redistributing or depending on this integration as part of a paid product, subscription or service. Contact the author via [GitHub](https://github.com/branko-lazarevic) for commercial licensing.
+
+Releases up to and including v2.2.4 were published under the MIT License. See [NOTICE](NOTICE) for details.
